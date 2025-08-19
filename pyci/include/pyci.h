@@ -683,7 +683,7 @@ public:
     Array<long> py_indptr() const;
 
 private:
-    void sort_row(const long);
+    static void sort_row(const long, SparseOp &sparseop);
 
     void add_row(const SQuantOp &, const DOCIWfn &, const long, ulong *, long *, long *);
 

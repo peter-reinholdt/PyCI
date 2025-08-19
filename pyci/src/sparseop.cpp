@@ -15,6 +15,7 @@
 
 #include <pyci.h>
 
+
 namespace pyci {
 
 namespace {
@@ -193,9 +194,49 @@ void SparseOp::update(const SQuantOp &ham, const WfnType &wfn, const long rows, 
     nrow = rows;
     ncol = cols;
     indptr.reserve(nrow + 1);
-    for (long idet = startrow; idet < rows; ++idet) {
-        add_row(ham, wfn, idet, &det[0], &occs[0], &virs[0]);
-        sort_row(idet);
+
+    long added_rows = nrow - startrow;
+    long nthread = get_num_threads();
+    long chunksize = added_rows / nthread + static_cast<bool>(added_rows % nthread);
+
+    while (nthread > 1 && chunksize < PYCI_CHUNKSIZE_MIN) {
+        nthread /= 2;
+        chunksize = added_rows / nthread + static_cast<bool>(added_rows % nthread);
+    }
+
+    Vector<std::thread> v_threads;
+    Vector<SparseOp> v_sparseops;
+    v_threads.reserve(nthread);
+    v_sparseops.reserve(nthread);
+
+    bool symm = true;
+    for (long i = 0; i < nthread; ++i) {
+        long start = startrow + end_chunk_idx(i, nthread, added_rows);
+        long end = startrow + end_chunk_idx(i + 1, nthread, added_rows);
+        v_sparseops.emplace_back(nrow, ncol, symm);
+        v_sparseops.back().indptr.reserve(end - start + 1);
+        auto &sparseop = v_sparseops.back();
+        v_threads.emplace_back([start, end, &sparseop, &ham, &wfn]() {
+            AlignedVector<ulong> det_thread(wfn.nword2);
+            AlignedVector<long> occs_thread(wfn.nocc);
+            AlignedVector<long> virs_thread(wfn.nvir);
+            for (long idet = start; idet < end; ++idet) {
+                sparseop.add_row(ham, wfn, idet, &det_thread[0], &occs_thread[0], &virs_thread[0]);
+            }
+            for (long idet = 0; idet < end - start; ++idet) {
+                sort_row(idet, sparseop);
+            }
+        });
+    }
+    for (auto &thread : v_threads) thread.join();
+    for (long i = 0; i < nthread; ++i) {
+        long offset = indices.size();
+        auto &sparseop = v_sparseops[i];
+        indices.insert(indices.end(), sparseop.indices.begin(), sparseop.indices.end());
+        data.insert(data.end(), sparseop.data.begin(), sparseop.data.end());
+        for (size_t i = 1; i < sparseop.indptr.size(); ++i) {
+            indptr.push_back(offset + sparseop.indptr[i]);
+        }
     }
     size = indices.size();
 }
@@ -211,10 +252,11 @@ void SparseOp::squeeze(void) {
     data.shrink_to_fit();
 }
 
-void SparseOp::sort_row(const long idet) {
+void SparseOp::sort_row(const long idet, SparseOp &sparseop) {
     typedef std::sort_with_arg::value_iterator_t<double, long> iter;
-    long start = indptr[idet], end = indptr[idet + 1];
-    std::sort(iter(&data[start], &indices[start]), iter(&data[end], &indices[end]));
+    long start = sparseop.indptr[idet];
+    long end = sparseop.indptr[idet + 1];
+    std::sort(iter(&sparseop.data[start], &sparseop.indices[start]), iter(&sparseop.data[end], &sparseop.indices[end]));
 }
 
 void SparseOp::add_row(const SQuantOp &ham, const DOCIWfn &wfn, const long idet, ulong *det, long *occs,
