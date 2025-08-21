@@ -96,6 +96,9 @@ double SparseOp::get_element(const long i, const long j) const {
 
 void SparseOp::perform_op(const double *x, double *y) const {
     if (symmetric)
+#ifdef HAS_MKL
+        return perform_op_symm_mkl(x, y);
+#endif
         return perform_op_symm(x, y);
     typedef Eigen::Map<const Eigen::SparseMatrix<double, Eigen::RowMajor, long>> SparseMatrix;
     SparseMatrix mat(nrow, ncol, size, &indptr[0], &indices[0], &data[0], 0);
@@ -111,6 +114,43 @@ void SparseOp::perform_op_symm(const double *x, double *y) const {
     Eigen::Map<Eigen::VectorXd> yvec(y, nrow);
     yvec = mat.selfadjointView<Eigen::Lower>() * xvec;
 }
+
+#ifdef HAS_MKL
+void SparseOp::perform_op_symm_mkl(const double *x, double *y) const {
+    // Convert indices to ILP64 (long long)
+    std::vector<long long> indptr_ll(indptr.begin(), indptr.end());
+    std::vector<long long> indices_ll(indices.begin(), indices.end());
+
+    // Create MKL CSR handle
+    sparse_matrix_t mkl_handle;
+    sparse_status_t status = mkl_sparse_d_create_csr(
+        &mkl_handle,
+        SPARSE_INDEX_BASE_ZERO,
+        nrow, ncol,
+        indptr_ll.data(),
+        indptr_ll.data() + 1,   // row_end pointers
+        indices_ll.data(),
+        const_cast<double*>(data.data()) // remove const
+    );
+    if (status != SPARSE_STATUS_SUCCESS) throw std::runtime_error("MKL CSR create failed");
+
+    status = mkl_sparse_optimize(mkl_handle);
+    if (status != SPARSE_STATUS_SUCCESS) throw std::runtime_error("MKL optimize failed");
+
+    // Descriptor for symmetric lower triangular
+    struct matrix_descr descr;
+    descr.type = SPARSE_MATRIX_TYPE_SYMMETRIC;
+    descr.mode = SPARSE_FILL_MODE_LOWER;
+    descr.diag = SPARSE_DIAG_NON_UNIT;
+
+    // Perform SpMV: y = A * x
+    status = mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, mkl_handle, descr, x, 0.0, y);
+    if (status != SPARSE_STATUS_SUCCESS) throw std::runtime_error("MKL SpMV failed");
+
+    mkl_sparse_destroy(mkl_handle);
+}
+#endif
+
 
 void SparseOp::solve_ci(const long n, const double *coeffs, const long ncv, const long maxiter,
                         const double tol, double *evals, double *evecs) const {

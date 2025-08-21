@@ -33,6 +33,9 @@ CFLAGS := -std=c++14 -Wall -Wextra -pipe -O3
 CFLAGS += -fPIC -flto=auto -fvisibility=hidden
 CFLAGS += -pthread
 CFLAGS += -Ipyci/include
+CFLAGS += -I$(MKLROOT)/include -DMKL_ILP64
+LDFLAGS  += -L$(MKLROOT)/lib/intel64 -lmkl_intel_ilp64 -lmkl_core -lmkl_sequential -lpthread -lm -ldl
+
 
 ifneq ($(MAKE_NATIVE),)
 CFLAGS += -mavx -mavx2 -msse4.2 -march=native -mtune=native
