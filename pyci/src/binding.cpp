@@ -1038,6 +1038,32 @@ y : numpy.ndarray
 
 sparse_op.def("matvec", &SparseOp::py_matvec_out, py::arg("x"), py::arg("out"));
 
+sparse_op.def("matvec_direct", &SparseOp::py_matvec_direct<FullCIWfn>, R"""(
+Compute the direct matrix vector product with vector ``x``.
+
+.. math::
+
+    A \mathbf{x} = \mathbf{y}
+
+Parameters
+----------
+x : numpy.ndarray
+    Vector to which the operator will be applied.
+out : numpy.ndarray, default=None
+    Array in which to store the result. One will be created if this is not specified.
+
+Returns
+-------
+y : numpy.ndarray
+    Result vector.
+
+)""", 
+              py::arg("ham"),
+              py::arg("wfn"),
+              py::arg("x"));
+
+sparse_op.def("matvec_direct", &SparseOp::py_matvec_direct_out<FullCIWfn>, py::arg("ham"), py::arg("wfn"), py::arg("x"), py::arg("out"));
+
 sparse_op.def("get_element", &SparseOp::get_element, R"""(
 Return the :math:`\left(i, j\right)`-th element of the sparse matrix operator.
 )""",
