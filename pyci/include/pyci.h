@@ -628,6 +628,7 @@ public:
 private:
     AlignedVector<double> data;
     AlignedVector<long> indices, indptr;
+    AlignedVector<double> diagonal;
 
 public:
     SparseOp(const SparseOp &);

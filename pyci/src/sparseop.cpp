@@ -14,7 +14,8 @@
  * along with PyCI. If not, see <http://www.gnu.org/licenses/>. */
 
 #include <pyci.h>
-
+#include <chrono>
+#include <iostream>
 
 namespace pyci {
 
@@ -112,6 +113,8 @@ void SparseOp::perform_op_symm(const double *x, double *y) const {
     yvec = mat.selfadjointView<Eigen::Lower>() * xvec;
 }
 
+
+
 void SparseOp::solve_ci(const long n, const double *coeffs, const long ncv, const long maxiter,
                         const double tol, double *evals, double *evecs) const {
     if ((nrow > 1 && n >= nrow) || (nrow == 1 && n > 1)) {
@@ -128,6 +131,8 @@ void SparseOp::solve_ci(const long n, const double *coeffs, const long ncv, cons
     Spectra::SparseSymMatProd<double, Eigen::Lower, Eigen::RowMajor, long> op(mat);
     Spectra::SymEigsSolver<Spectra::SparseSymMatProd<double, Eigen::Lower, Eigen::RowMajor, long>>
         eigs(op, n, (ncv != -1) ? ncv : std::min(nrow, std::max(n * 2 + 1, 20L)));
+
+
     if (coeffs == nullptr)
         eigs.init();
     else
@@ -217,12 +222,8 @@ void SparseOp::update(const SQuantOp &ham, const WfnType &wfn, const long rows, 
 
     long added_rows = nrow - startrow;
     long nthread = get_num_threads();
-    long chunksize = added_rows / nthread + static_cast<bool>(added_rows % nthread);
 
-    while (nthread > 1 && chunksize < PYCI_CHUNKSIZE_MIN) {
-        nthread /= 2;
-        chunksize = added_rows / nthread + static_cast<bool>(added_rows % nthread);
-    }
+    if (nthread > added_rows) nthread = added_rows;
 
     Vector<std::thread> v_threads;
     Vector<SparseOp> v_sparseops;
@@ -544,8 +545,10 @@ void SparseOp::add_row(const SQuantOp &ham, const FullCIWfn &wfn, const long ide
                     val1 += ham.two_mo[ioffset + n2 * kk + n1 * jj + kk];
                 }
                 // add 1-0 matrix element
-                append<double>(data, sign_up * val1);
-                append<long>(indices, jdet);
+                if (abs(val1) > 1e-10 ) { 
+                    append<double>(data, sign_up * val1);
+                    append<long>(indices, jdet);
+                }
             }
             // loop over spin-down occupied indices
             for (k = 0; k < wfn.nocc_dn; ++k) {
@@ -560,10 +563,12 @@ void SparseOp::add_row(const SQuantOp &ham, const FullCIWfn &wfn, const long ide
                     // check if 1-1 excited determinant is in wfn
                     if ((jdet != -1) && (jdet < jmin) && (jdet < ncol)) {
                         // add 1-1 matrix element
-                        append<double>(data, sign_up *
-                                                 phase_single_det(wfn.nword, kk, ll, rdet_dn) *
-                                                 ham.two_mo[koffset + n1 * jj + ll]);
-                        append<long>(indices, jdet);
+                        if (abs(ham.two_mo[koffset + n1 * jj + ll]) > 1e-10) {
+                            append<double>(data, sign_up *
+                                                     phase_single_det(wfn.nword, kk, ll, rdet_dn) *
+                                                     ham.two_mo[koffset + n1 * jj + ll]);
+                            append<long>(indices, jdet);
+                        }
                     }
                     excite_det(ll, kk, det_dn);
                 }
@@ -581,10 +586,12 @@ void SparseOp::add_row(const SQuantOp &ham, const FullCIWfn &wfn, const long ide
                     // check if 2-0 excited determinant is in wfn
                     if ((jdet != -1) && (jdet < jmin) && (jdet < ncol)) {
                         // add 2-0 matrix element
-                        append<double>(data, phase_double_det(wfn.nword, ii, kk, jj, ll, rdet_up) *
-                                                 (ham.two_mo[koffset + n1 * jj + ll] -
-                                                  ham.two_mo[koffset + n1 * ll + jj]));
-                        append<long>(indices, jdet);
+                        if (abs((ham.two_mo[koffset + n1 * jj + ll] - ham.two_mo[koffset + n1 * ll + jj])) > 1e-10) {
+                            append<double>(data, phase_double_det(wfn.nword, ii, kk, jj, ll, rdet_up) *
+                                                     (ham.two_mo[koffset + n1 * jj + ll] -
+                                                      ham.two_mo[koffset + n1 * ll + jj]));
+                            append<long>(indices, jdet);
+                        }
                     }
                     excite_det(ll, kk, det_up);
                 }
@@ -623,8 +630,10 @@ void SparseOp::add_row(const SQuantOp &ham, const FullCIWfn &wfn, const long ide
                     val1 += ham.two_mo[koffset + n1 * jj + kk] - ham.two_mo[koffset + n1 * kk + jj];
                 }
                 // add 0-1 matrix element
-                append<double>(data, phase_single_det(wfn.nword, ii, jj, rdet_dn) * val1);
-                append<long>(indices, jdet);
+                if (abs(val1) > 1e-10) { 
+                    append<double>(data, phase_single_det(wfn.nword, ii, jj, rdet_dn) * val1);
+                    append<long>(indices, jdet);
+                }
             }
             // loop over spin-down occupied indices
             for (k = i + 1; k < wfn.nocc_dn; ++k) {
@@ -639,10 +648,12 @@ void SparseOp::add_row(const SQuantOp &ham, const FullCIWfn &wfn, const long ide
                     // check if excited determinant is in wfn
                     if ((jdet != -1) && (jdet < jmin) && (jdet < ncol)) {
                         // add 0-2 matrix element
-                        append<double>(data, phase_double_det(wfn.nword, ii, kk, jj, ll, rdet_dn) *
-                                                 (ham.two_mo[koffset + n1 * jj + ll] -
-                                                  ham.two_mo[koffset + n1 * ll + jj]));
-                        append<long>(indices, jdet);
+                        if (abs((ham.two_mo[koffset + n1 * jj + ll] - ham.two_mo[koffset + n1 * ll + jj])) > 1e-10) {
+                            append<double>(data, phase_double_det(wfn.nword, ii, kk, jj, ll, rdet_dn) *
+                                                     (ham.two_mo[koffset + n1 * jj + ll] -
+                                                      ham.two_mo[koffset + n1 * ll + jj]));
+                            append<long>(indices, jdet);
+                        }
                     }
                     excite_det(ll, kk, det_dn);
                 }
@@ -654,6 +665,7 @@ void SparseOp::add_row(const SQuantOp &ham, const FullCIWfn &wfn, const long ide
     if (idet < ncol) {
         append<double>(data, val2);
         append<long>(indices, idet);
+        append<double>(diagonal, val2);
     }
     // add pointer to next row's indices
     append<long>(indptr, indices.size());
