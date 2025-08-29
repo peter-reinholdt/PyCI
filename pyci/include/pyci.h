@@ -685,11 +685,11 @@ public:
     template<class WfnType>
     void py_update(const SQuantOp &, const WfnType &);
 
-    Array<double> py_data() const;
+    pybind11::array_t<double> py_data() const;
 
-    Array<long> py_indices() const;
+    pybind11::array_t<long> py_indices() const;
 
-    Array<long> py_indptr() const;
+    pybind11::array_t<long> py_indptr() const;
 
 private:
     static void sort_row(const long, SparseOp &sparseop);

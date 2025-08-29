@@ -734,16 +734,34 @@ void SparseOp::add_row(const SQuantOp &ham, const GenCIWfn &wfn, const long idet
     append<long>(indptr, indices.size());
 }
 
-Array<double> SparseOp::py_data() const {
-    return Array<double>(data.size(), &data[0]);
+pybind11::array_t<double> SparseOp::py_data() const {
+    ssize_t size = static_cast<ssize_t>(data.size());
+    return pybind11::array_t<double>(
+            {size},
+            {sizeof(double)},
+            data.data(),
+            pybind11::cast(this)
+    );
 }
 
-Array<long> SparseOp::py_indices() const {
-    return Array<long>(indices.size(), &indices[0]);
+pybind11::array_t<long> SparseOp::py_indices() const {
+    ssize_t size = static_cast<ssize_t>(indices.size());
+    return pybind11::array_t<long>(
+            {size},
+            {sizeof(long)},
+            indices.data(),
+            pybind11::cast(this)
+    );
 }
 
-Array<long> SparseOp::py_indptr() const {
-    return Array<long>(indptr.size(), &indptr[0]);
+pybind11::array_t<long> SparseOp::py_indptr() const {
+    ssize_t size = static_cast<ssize_t>(indptr.size());
+    return pybind11::array_t<long>(
+            {size},
+            {sizeof(long)},
+            indptr.data(),
+            pybind11::cast(this)
+    );
 }
 
 } // namespace pyci
