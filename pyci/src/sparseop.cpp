@@ -151,11 +151,17 @@ void SparseOp::solve_ci(const long n, const double *coeffs, const long ncv, cons
 
 }
 
-Array<double> SparseOp::py_matvec(const Array<double> x) const {
+pybind11::array_t<double> SparseOp::py_matvec(const Array<double> x) const {
     Array<double> y(nrow);
     perform_op(reinterpret_cast<const double *>(x.request().ptr),
                reinterpret_cast<double *>(y.request().ptr));
-    return y;
+    ssize_t size = static_cast<ssize_t>(data.size());
+    return pybind11::array_t<double>(
+            {size},
+            {sizeof(double)},
+            data.data(),
+            pybind11::cast(this)
+            );
 }
 
 Array<double> SparseOp::py_matvec_out(const Array<double> x, Array<double> y) const {

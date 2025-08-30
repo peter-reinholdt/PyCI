@@ -670,7 +670,7 @@ public:
 
     void squeeze(void);
 
-    Array<double> py_matvec(const Array<double>) const;
+    pybind11::array_t<double> py_matvec(const Array<double>) const;
 
     Array<double> py_matvec_out(const Array<double>, Array<double>) const;
 
