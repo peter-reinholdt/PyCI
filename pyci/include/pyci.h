@@ -45,6 +45,9 @@
 
 #include <sort_with_arg.h>
 
+#define HAS_MKL 1
+#include <mkl.h>
+
 /* Macros to produce strings from literal macro parameters. */
 
 #define LITERAL(S) #S
@@ -657,8 +660,7 @@ public:
 
     void perform_op_symm(const double *, double *) const;
 
-    template<class WfnType>
-    void perform_op_direct(const SQuantOp &, const WfnType &, const double *, double *) const;
+    void perform_op_symm_mkl(const double *, double *) const;
 
     void solve_ci(const long, const double *, const long, const long, const double, double *,
                   double *) const;
@@ -673,12 +675,6 @@ public:
     pybind11::array_t<double> py_matvec(const Array<double>) const;
 
     Array<double> py_matvec_out(const Array<double>, Array<double>) const;
-
-    template<class WfnType>
-    Array<double> py_matvec_direct(const SQuantOp &, const WfnType &, const Array<double>) const;
-
-    template<class WfnType>
-    Array<double> py_matvec_direct_out(const SQuantOp &, const WfnType &, const Array<double>, Array<double>) const;
 
     pybind11::tuple py_solve_ci(const long, pybind11::object, const long, const long,
                                 const double) const;
@@ -700,8 +696,6 @@ private:
     void add_row(const SQuantOp &, const FullCIWfn &, const long, ulong *, long *, long *);
 
     void add_row(const SQuantOp &, const GenCIWfn &, const long, ulong *, long *, long *);
-
-    void apply_row(const SQuantOp &, const FullCIWfn &, const long, ulong *, long *, long *, const double *, double *) const;
 };
 
 /* FanCI objective classes. */
