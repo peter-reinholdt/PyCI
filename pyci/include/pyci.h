@@ -672,7 +672,7 @@ public:
 
     void squeeze(void);
 
-    pybind11::array_t<double> py_matvec(const Array<double>) const;
+    Array<double> py_matvec(const Array<double>) const;
 
     Array<double> py_matvec_out(const Array<double>, Array<double>) const;
 
@@ -687,6 +687,8 @@ public:
     pybind11::array_t<long> py_indices() const;
 
     pybind11::array_t<long> py_indptr() const;
+
+    pybind11::array_t<double> py_diagonal() const;
 
 private:
     static void sort_row(const long, SparseOp &sparseop);

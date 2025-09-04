@@ -33,8 +33,9 @@ CFLAGS := -std=c++14 -Wall -Wextra -pipe -O3
 CFLAGS += -fPIC -flto=auto -fvisibility=hidden
 CFLAGS += -pthread
 CFLAGS += -Ipyci/include
-CFLAGS += -I$(MKLROOT)/include -DMKL_ILP64
-LDFLAGS  += -L$(MKLROOT)/lib/intel64 -lmkl_intel_ilp64 -lmkl_core -lmkl_sequential -lpthread -lm -ldl
+CFLAGS +=  -DMKL_ILP64  -I"${MKLROOT}/include"
+LDFLAGS += -L${MKLROOT}/lib -lmkl_intel_ilp64 -lmkl_intel_thread -lmkl_core -liomp5 -lpthread -lm -ldl
+
 
 
 ifneq ($(MAKE_NATIVE),)
@@ -102,7 +103,7 @@ pyci/src/%.o: pyci/src/%.cpp pyci/include/pyci.h $(DEPS)
 	$(CXX) $(CFLAGS) $(DEFS) -c $(<) -o $(@)
 
 pyci/_pyci.so.$(PYCI_VERSION): $(OBJECTS)
-	$(CXX) $(CFLAGS) $(DEFS) -shared $(^) -o $(@)
+	$(CXX) $(CFLAGS) $(DEFS) -shared $(^) $(LDFLAGS) -o $(@)
 
 pyci/_pyci.so.$(VERSION_MAJOR): pyci/_pyci.so.$(PYCI_VERSION)
 	ln -sf $(notdir $(<)) $(@)

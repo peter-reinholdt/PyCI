@@ -96,11 +96,12 @@ double SparseOp::get_element(const long i, const long j) const {
 }
 
 void SparseOp::perform_op(const double *x, double *y) const {
-    if (symmetric)
+    if (symmetric){
 #ifdef HAS_MKL
         return perform_op_symm_mkl(x, y);
 #endif
         return perform_op_symm(x, y);
+    }
     typedef Eigen::Map<const Eigen::SparseMatrix<double, Eigen::RowMajor, long>> SparseMatrix;
     SparseMatrix mat(nrow, ncol, size, &indptr[0], &indices[0], &data[0], 0);
     Eigen::Map<const Eigen::VectorXd> xvec(x, ncol);
@@ -118,37 +119,84 @@ void SparseOp::perform_op_symm(const double *x, double *y) const {
 
 #ifdef HAS_MKL
 void SparseOp::perform_op_symm_mkl(const double *x, double *y) const {
-    // Convert indices to ILP64 (long long)
-    std::vector<long long> indptr_ll(indptr.begin(), indptr.end());
-    std::vector<long long> indices_ll(indices.begin(), indices.end());
+    // the sparse matrix is symmetric, stored as lower diagonal
+    // this gets the full matvec by interpreting the sparse matrix is a general matrix
+    // then doing A*x + A.T*x - diag(A)*x
+    // note that this could be done in MKL with
+    // the descr.type = SPARSE_MATRIX_TYPE_SYMMETRIC, 
+    // but that scales poorly in the number of threads.
+    // the implementation has a nthread*nrow memory overhead, 
+    // which should be fine when nthread*nrow<<nnz  
+    long long* indptr_mkl = const_cast<long long*>(reinterpret_cast<const long long*>(&indptr[0]));
+    long long* indices_mkl = const_cast<long long*>(reinterpret_cast<const long long*>(&indices[0]));
 
-    // Create MKL CSR handle
-    sparse_matrix_t mkl_handle;
-    sparse_status_t status = mkl_sparse_d_create_csr(
-        &mkl_handle,
-        SPARSE_INDEX_BASE_ZERO,
-        nrow, ncol,
-        indptr_ll.data(),
-        indptr_ll.data() + 1,   // row_end pointers
-        indices_ll.data(),
-        const_cast<double*>(data.data()) // remove const
-    );
-    if (status != SPARSE_STATUS_SUCCESS) throw std::runtime_error("MKL CSR create failed");
+    long nthread = get_num_threads();
+    long total_nnz = indptr.back();
+    long max_threads = std::max(1L, (long)(total_nnz / 1e6)); // each thread should work on at least a million nnz
+    nthread = std::min(nthread, max_threads);
 
-    status = mkl_sparse_optimize(mkl_handle);
-    if (status != SPARSE_STATUS_SUCCESS) throw std::runtime_error("MKL optimize failed");
+    // y <- A[start:end, :].T * x[start:end]  + A[start:end, :] * x
+    auto worker = [&](long row_start, long row_end, std::vector<double>*& y_local) {
+        mkl_set_num_threads_local(1);
+        y_local = new std::vector<double>(nrow, 0.0);
+        long nrow_thread = row_end - row_start;
+        sparse_matrix_t mkl_handle;
+        sparse_status_t status = mkl_sparse_d_create_csr(
+            &mkl_handle,
+            SPARSE_INDEX_BASE_ZERO,
+            nrow_thread, ncol,
+            &indptr_mkl[row_start],
+            &indptr_mkl[row_start + 1],
+            &indices_mkl[0],
+            const_cast<double*>(data.data())
+        );
 
-    // Descriptor for symmetric lower triangular
-    struct matrix_descr descr;
-    descr.type = SPARSE_MATRIX_TYPE_SYMMETRIC;
-    descr.mode = SPARSE_FILL_MODE_LOWER;
-    descr.diag = SPARSE_DIAG_NON_UNIT;
+        struct matrix_descr descr;
+        descr.type = SPARSE_MATRIX_TYPE_GENERAL;
+        descr.diag = SPARSE_DIAG_NON_UNIT;
 
-    // Perform SpMV: y = A * x
-    status = mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, mkl_handle, descr, x, 0.0, y);
-    if (status != SPARSE_STATUS_SUCCESS) throw std::runtime_error("MKL SpMV failed");
+        if (status != SPARSE_STATUS_SUCCESS) throw std::runtime_error("MKL CSR create failed");
+        status = mkl_sparse_optimize(mkl_handle);
+        if (status != SPARSE_STATUS_SUCCESS) throw std::runtime_error("MKL optimize failed");
 
-    mkl_sparse_destroy(mkl_handle);
+
+        // y[:]<-A[start:end, :].T @ x[start:end]
+        status = mkl_sparse_d_mv(SPARSE_OPERATION_TRANSPOSE, 1.0, mkl_handle, descr, x+row_start, 0.0, y_local->data());
+        if (status != SPARSE_STATUS_SUCCESS) throw std::runtime_error("MKL SpMV failed");
+        // y[start:end] += A[start:end, :] @ x
+        status = mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, mkl_handle, descr, x, 1.0, &(*y_local)[row_start]);
+        if (status != SPARSE_STATUS_SUCCESS) throw std::runtime_error("MKL SpMV failed");
+        mkl_sparse_destroy(mkl_handle);
+    };
+    Vector<std::thread> v_threads;
+    std::vector<std::vector<double>*> results(nthread, nullptr);
+    
+//    long total_nnz = indptr.back();
+    long target_nnz = total_nnz / nthread;
+    long nnz;
+    long row_start = 0;
+    long row_end = 0;
+    for (long i = 0; i < nthread; i++){
+        nnz = indptr[row_end] - indptr[row_start];
+        while (nnz < target_nnz && row_end < nrow){
+            row_end++;
+            nnz = indptr[row_end] - indptr[row_start];
+        }
+        v_threads.emplace_back([&, i, row_start, row_end](){
+            worker(row_start, row_end, results[i]);
+        });
+        row_start = row_end;
+    }
+    for (auto &thread : v_threads) thread.join();
+    std::fill(y, y+nrow, 0.0);
+    for (auto* result : results){
+        cblas_daxpy(nrow, 1.0, result->data(), 1, y, 1);
+        delete result;
+    }
+    //remove double-counted diagonal
+    std::vector<double> diag_times_x(nrow);
+    vdMul(nrow, diagonal.data(), x, diag_times_x.data());
+    cblas_daxpy(nrow, -1.0, diag_times_x.data(), 1, y, 1);
 }
 #endif
 
@@ -188,17 +236,11 @@ void SparseOp::solve_ci(const long n, const double *coeffs, const long ncv, cons
 
 }
 
-pybind11::array_t<double> SparseOp::py_matvec(const Array<double> x) const {
+Array<double> SparseOp::py_matvec(const Array<double> x) const {
     Array<double> y(nrow);
     perform_op(reinterpret_cast<const double *>(x.request().ptr),
                reinterpret_cast<double *>(y.request().ptr));
-    ssize_t size = static_cast<ssize_t>(data.size());
-    return pybind11::array_t<double>(
-            {size},
-            {sizeof(double)},
-            data.data(),
-            pybind11::cast(this)
-            );
+    return y;
 }
 
 Array<double> SparseOp::py_matvec_out(const Array<double> x, Array<double> y) const {
@@ -272,12 +314,14 @@ void SparseOp::update(const SQuantOp &ham, const WfnType &wfn, const long rows, 
             }
         });
     }
+
     for (auto &thread : v_threads) thread.join();
     for (long i = 0; i < nthread; ++i) {
         long offset = indices.size();
         auto &sparseop = v_sparseops[i];
         indices.insert(indices.end(), sparseop.indices.begin(), sparseop.indices.end());
         data.insert(data.end(), sparseop.data.begin(), sparseop.data.end());
+        diagonal.insert(diagonal.end(), sparseop.diagonal.begin(), sparseop.diagonal.end());
         for (size_t i = 1; i < sparseop.indptr.size(); ++i) {
             indptr.push_back(offset + sparseop.indptr[i]);
         }
@@ -624,6 +668,16 @@ pybind11::array_t<long> SparseOp::py_indptr() const {
             {size},
             {sizeof(long)},
             indptr.data(),
+            pybind11::cast(this)
+    );
+}
+
+pybind11::array_t<double> SparseOp::py_diagonal() const {
+    ssize_t size = static_cast<ssize_t>(diagonal.size());
+    return pybind11::array_t<double>(
+            {size},
+            {sizeof(double)},
+            diagonal.data(),
             pybind11::cast(this)
     );
 }
