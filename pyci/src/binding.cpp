@@ -990,6 +990,26 @@ sparse_op.def("update", &SparseOp::py_update<FullCIWfn>, py::arg("ham"), py::arg
 
 sparse_op.def("update", &SparseOp::py_update<GenCIWfn>, py::arg("ham"), py::arg("wfn"));
 
+sparse_op.def("update_diagonal", &SparseOp::py_update_diagonal<FullCIWfn>, R"""(
+Update a sparse matrix diagonal.
+
+Parameters
+----------
+ham : pyci.secondquant_op
+    Hamiltonian.
+wfn : pyci.wavefunction
+    Wave function.
+
+Notes
+-----
+The user is responsible for using the same ``ham`` and ``wfn``.
+This method doesn't work with rectangular operators. Those must
+be re-initialized from the wave function object.
+
+)""",
+        py::arg("ham"), py::arg("wfn"));
+
+
 sparse_op.def("__call__", &SparseOp::py_matvec, R"""(
 Compute the matrix vector product of the sparse matrix operator with vector ``x``.
 
@@ -1037,6 +1057,32 @@ y : numpy.ndarray
               py::arg("x"));
 
 sparse_op.def("matvec", &SparseOp::py_matvec_out, py::arg("x"), py::arg("out"));
+
+sparse_op.def("Vmatvec_direct", &SparseOp::py_Vmatvec_direct<FullCIWfn>, R"""(
+Compute the direct V matrix vector product with vector ``x``.
+
+.. math::
+
+    A \mathbf{x} = \mathbf{y}
+
+Parameters
+----------
+x : numpy.ndarray
+    Vector to which the operator will be applied.
+
+Returns
+-------
+y : numpy.ndarray
+    Result vector.
+
+)""", 
+              py::arg("ham"),
+              py::arg("wfn"),
+              py::arg("Nint"),
+              py::arg("eps"),
+              py::arg("x"));
+
+sparse_op.def("Vmatvec_direct", &SparseOp::py_Vmatvec_direct<FullCIWfn>, py::arg("ham"), py::arg("wfn"), py::arg("Nint"), py::arg("eps"), py::arg("x"));
 
 sparse_op.def("get_element", &SparseOp::get_element, R"""(
 Return the :math:`\left(i, j\right)`-th element of the sparse matrix operator.

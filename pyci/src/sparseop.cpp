@@ -200,6 +200,197 @@ void SparseOp::perform_op_symm_mkl(const double *x, double *y) const {
 }
 #endif
 
+template<class WfnType>
+void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const long Nint, const double eps, const double *x, double *y) const {
+    // perform direct hamiltonian-vector multiply (with threshold epsilon)
+    long nthread = get_num_threads();
+    long chunksize = wfn.ndet / nthread + static_cast<bool>(wfn.ndet % nthread);
+    while (nthread > 1 && chunksize < PYCI_CHUNKSIZE_MIN) {
+        nthread /= 2;
+        chunksize = wfn.ndet / nthread + static_cast<bool>(wfn.ndet % nthread);
+    }
+
+    auto worker = [&](const SQuantOp &ham, const FullCIWfn &wfn, const long start, const long end, const long Nint, const double eps, const double *x, std::vector<double>*& y){
+        y = new std::vector<double>(wfn.ndet, 0.0);
+        AlignedVector<ulong> det(wfn.nword2);
+        AlignedVector<long> occs(wfn.nocc);
+        AlignedVector<long> virs(wfn.nvir);
+        long i, j, k, l, ii, jj, kk, ll, ioffset, koffset, sign_up;
+        long jdet;
+        long n1 = wfn.nbasis;
+        long n2 = n1 * n1;
+        long n3 = n1 * n2;
+        double val;
+        double eps_i;
+        bool is_internal;
+        ulong *det_up = &det[0];
+        ulong *det_dn = det_up + wfn.nword;
+        long *occs_up = &occs[0];
+        long *occs_dn = occs_up + wfn.nocc_up;
+        long *virs_up = &virs[0];
+        long *virs_dn = virs_up + wfn.nvir_up;
+        for (long idet = start; idet<end; idet++){
+            eps_i = eps / std::abs(x[idet]);
+            const ulong *rdet_up = wfn.det_ptr(idet);
+            const ulong *rdet_dn = rdet_up + wfn.nword;
+            std::memcpy(det_up, rdet_up, sizeof(ulong) * wfn.nword2);
+            fill_occs(wfn.nword, rdet_up, occs_up);
+            fill_occs(wfn.nword, rdet_dn, occs_dn);
+            fill_virs(wfn.nword, wfn.nbasis, rdet_up, virs_up);
+            fill_virs(wfn.nword, wfn.nbasis, rdet_dn, virs_dn);
+            // loop over spin-up occupied indices
+            for (i = 0; i < wfn.nocc_up; ++i) {
+                ii = occs_up[i];
+                ioffset = n3 * ii;
+                // loop over spin-up virtual indices
+                for (j = 0; j < wfn.nvir_up; ++j) {
+                    jj = virs_up[j];
+                    // 1-0 excitation elements
+                    excite_det(ii, jj, det_up);
+                    sign_up = phase_single_det(wfn.nword, ii, jj, rdet_up);
+                    val = ham.one_mo[n1 * ii + jj];
+                    for (k = 0; k < wfn.nocc_up; ++k) {
+                        kk = occs_up[k];
+                        koffset = ioffset + n2 * kk;
+                        val += ham.two_mo[koffset + n1 * jj + kk] - ham.two_mo[koffset + n1 * kk + jj];
+                    }
+                    for (k = 0; k < wfn.nocc_dn; ++k) {
+                        kk = occs_dn[k];
+                        val += ham.two_mo[ioffset + n2 * kk + n1 * jj + kk];
+                    }
+                    // add contribution if |H*c| > eps
+                    if (std::abs(val) > eps_i) {
+                        jdet = wfn.index_det(det_up);
+                        is_internal = (idet < Nint) && (jdet < Nint);
+                        if ((jdet != -1) && !is_internal) {
+                            val *= sign_up * x[idet];
+                            y->data()[jdet] += val;
+                        }
+                    }
+                    // loop over spin-down occupied indices
+                    for (k = 0; k < wfn.nocc_dn; ++k) {
+                        kk = occs_dn[k];
+                        koffset = ioffset + n2 * kk;
+                        // loop over spin-down virtual indices
+                        for (l = 0; l < wfn.nvir_dn; ++l) {
+                            ll = virs_dn[l];
+                            // 1-1 excitation elements
+                            val = ham.two_mo[koffset + n1 * jj + ll];
+                            if (std::abs(val) > eps_i) {
+                                excite_det(kk, ll, det_dn);
+                                // add contribution if |H*c| > eps
+                                jdet = wfn.index_det(det_up);
+                                is_internal = (idet < Nint) && (jdet < Nint);
+                                if ((jdet != -1) && !is_internal) {
+                                    val *= sign_up * phase_single_det(wfn.nword, kk, ll, rdet_dn) * x[idet];
+                                    y->data()[jdet] += val;
+                                }
+                                excite_det(ll, kk, det_dn);
+                            }
+                        }
+                    }
+                    // loop over spin-up occupied indices
+                    for (k = i + 1; k < wfn.nocc_up; ++k) {
+                        kk = occs_up[k];
+                        koffset = ioffset + n2 * kk;
+                        // loop over spin-up virtual indices
+                        for (l = j + 1; l < wfn.nvir_up; ++l) {
+                            ll = virs_up[l];
+                            // 2-0 excitation elements
+                            val = ham.two_mo[koffset + n1 * jj + ll] - ham.two_mo[koffset + n1 * ll + jj];
+                            if (std::abs(val) > eps_i) {
+                                excite_det(kk, ll, det_up);
+                                // add contribution if |H*c| > eps
+                                jdet = wfn.index_det(det_up);
+                                is_internal = (idet < Nint) && (jdet < Nint);
+                                if ((jdet != -1) && !is_internal) {
+                                    val *= phase_double_det(wfn.nword, ii, kk, jj, ll, rdet_up) * x[idet];
+                                    y->data()[jdet] += val;
+                                }
+                                excite_det(ll, kk, det_up);
+                            }
+                        }
+                    }
+                    excite_det(jj, ii, det_up);
+                }
+            }
+            // loop over spin-down occupied indices
+            for (i = 0; i < wfn.nocc_dn; ++i) {
+                ii = occs_dn[i];
+                ioffset = n3 * ii;
+                // loop over spin-down virtual indices
+                for (j = 0; j < wfn.nvir_dn; ++j) {
+                    jj = virs_dn[j];
+                    // 0-1 excitation elements
+                    excite_det(ii, jj, det_dn);
+                    val = ham.one_mo[n1 * ii + jj];
+                    for (k = 0; k < wfn.nocc_up; ++k) {
+                        kk = occs_up[k];
+                        val += ham.two_mo[ioffset + n2 * kk + n1 * jj + kk];
+                    }
+                    for (k = 0; k < wfn.nocc_dn; ++k) {
+                        kk = occs_dn[k];
+                        koffset = ioffset + n2 * kk;
+                        val += ham.two_mo[koffset + n1 * jj + kk] - ham.two_mo[koffset + n1 * kk + jj];
+                    }
+                    // add contribution if |H*c| > eps
+                    if (std::abs(val) > eps_i) {
+                        jdet = wfn.index_det(det_up);
+                        is_internal = (idet < Nint) && (jdet < Nint);
+                        if ((jdet != -1) && !is_internal) {
+                            val *= phase_single_det(wfn.nword, ii, jj, rdet_dn) * x[idet];
+                            y->data()[jdet] += val;
+                    }
+                    }
+                    // loop over spin-down occupied indices
+                    for (k = i + 1; k < wfn.nocc_dn; ++k) {
+                        kk = occs_dn[k];
+                        koffset = ioffset + n2 * kk;
+                        // loop over spin-down virtual indices
+                        for (l = j + 1; l < wfn.nvir_dn; ++l) {
+                            ll = virs_dn[l];
+                            // 0-2 excitation elements
+                            val = ham.two_mo[koffset + n1 * jj + ll] - ham.two_mo[koffset + n1 * ll + jj];
+                            if (std::abs(val) > eps_i) {
+                                excite_det(kk, ll, det_dn);
+                                // add determinant if |H*c| > eps and not already in wfn
+                                jdet = wfn.index_det(det_up);
+                                is_internal = (idet < Nint) && (jdet < Nint);
+                                if ((jdet != -1) && !is_internal) {
+                                    val *= phase_double_det(wfn.nword, ii, kk, jj, ll, rdet_dn) * x[idet];
+                                    y->data()[jdet] += val;
+                                }
+                                excite_det(ll, kk, det_dn);
+                            }
+                        }
+                    }
+                    excite_det(jj, ii, det_dn);
+                }
+            }
+        }
+    };
+
+
+    Vector<std::thread> v_threads;
+    v_threads.reserve(nthread);
+    std::vector<std::vector<double>*> results(nthread, nullptr);
+    for (long i = 0; i < nthread; ++i) {
+        long start = end_chunk_idx(i, nthread, wfn.ndet);
+        long end = end_chunk_idx(i + 1, nthread, wfn.ndet);
+        end = std::min(end, wfn.ndet);
+        v_threads.emplace_back([&, i, start, end](){
+                worker(ham, wfn, start, end, Nint, eps, x, results[i]);
+            }
+        );
+    }
+    std::fill(y, y+wfn.ndet, 0.0);
+    for (auto &thread : v_threads) thread.join();
+    for (auto *result : results){
+        cblas_daxpy(wfn.ndet, 1.0, result->data(), 1, y, 1);
+        delete result;
+    }
+}
+
 void SparseOp::solve_ci(const long n, const double *coeffs, const long ncv, const long maxiter,
                         const double tol, double *evals, double *evecs) const {
     if ((nrow > 1 && n >= nrow) || (nrow == 1 && n > 1)) {
@@ -248,6 +439,16 @@ Array<double> SparseOp::py_matvec_out(const Array<double> x, Array<double> y) co
                reinterpret_cast<double *>(y.request().ptr));
     return y;
 }
+
+template<class WfnType>
+Array<double> SparseOp::py_Vmatvec_direct(const SQuantOp &ham, const WfnType &wfn, const long Nint, const double eps, const Array<double> x) const {
+    Array<double> y(wfn.ndet);
+    perform_Vop_direct(ham, wfn, Nint, eps, reinterpret_cast<const double *>(x.request().ptr),
+               reinterpret_cast<double *>(y.request().ptr));
+    return y;
+}
+
+template Array<double> SparseOp::py_Vmatvec_direct(const SQuantOp &, const FullCIWfn &, const long Nint, const double eps, const Array<double> x) const ;
 
 pybind11::tuple SparseOp::py_solve_ci(const long n, pybind11::object coeffs, const long ncv,
                                       const long maxiter, const double tol) const {
@@ -327,6 +528,74 @@ void SparseOp::update(const SQuantOp &ham, const WfnType &wfn, const long rows, 
         }
     }
     size = indices.size();
+}
+
+template<class WfnType>
+void SparseOp::py_update_diagonal(const SQuantOp &ham, const WfnType &wfn) {
+    update_diagonal<WfnType>(ham, wfn, wfn.ndet, nrow);
+}
+
+template void SparseOp::py_update_diagonal(const SQuantOp &, const FullCIWfn &);
+
+template<class WfnType>
+void SparseOp::update_diagonal(const SQuantOp &ham, const WfnType &wfn, const long rows, const long startrow) {
+    nrow = rows;
+    ncol = rows;
+    diagonal.resize(nrow);
+
+    long added_rows = nrow - startrow;
+    long nthread = get_num_threads();
+
+    if (nthread > added_rows) nthread = added_rows;
+
+    Vector<std::thread> v_threads;
+    for (long i = 0; i < nthread; ++i) {
+        long start = startrow + end_chunk_idx(i, nthread, added_rows);
+        long end = startrow + end_chunk_idx(i + 1, nthread, added_rows);
+        v_threads.emplace_back([this, start, end, &ham, &wfn]() {
+            AlignedVector<ulong> det(wfn.nword2);
+            AlignedVector<long> occs(wfn.nocc);
+            long *occs_up = &occs[0];
+            long *occs_dn = occs_up + wfn.nocc_up;
+            long i, j, k, l, ioffset, koffset;
+            const long n1 = wfn.nbasis;
+            const long n2 = n1 * n1;
+            const long n3 = n1 * n2;
+            for (long idet = start; idet < end; ++idet){
+                double diag = 0.0;
+                const ulong *det_up = wfn.det_ptr(idet);
+                const ulong *det_dn = det_up + wfn.nword;
+                fill_occs(wfn.nword, det_up, occs_up);
+                fill_occs(wfn.nword, det_dn, occs_dn);
+                for (i = 0; i < wfn.nocc_up; ++i) {
+                    j = occs_up[i];
+                    ioffset = n3 * j;
+                    diag += ham.one_mo[(wfn.nbasis + 1) * j];
+                    for (k = i + 1; k < wfn.nocc_up; ++k) {
+                        l = occs_up[k];
+                        koffset = ioffset + n2 * l;
+                        diag += ham.two_mo[koffset + wfn.nbasis * j + l] - ham.two_mo[koffset + wfn.nbasis * l + j];
+                    }
+                    for (k = 0; k < wfn.nocc_dn; ++k) {
+                        l = occs_dn[k];
+                        diag += ham.two_mo[ioffset + n2 * l + wfn.nbasis * j + l];
+                    }
+                }
+                for (i = 0; i < wfn.nocc_dn; ++i) {
+                    j = occs_dn[i];
+                    ioffset = n3 * j;
+                    diag += ham.one_mo[(wfn.nbasis + 1) * j];
+                    for (k = i + 1; k < wfn.nocc_dn; ++k) {
+                        l = occs_dn[k];
+                        koffset = ioffset + n2 * l;
+                        diag += ham.two_mo[koffset + wfn.nbasis * j + l] - ham.two_mo[koffset + wfn.nbasis * l + j];
+                    }
+                }
+                diagonal[idet] = diag;
+            }
+        });
+    }
+    for (auto &thread : v_threads) thread.join();
 }
 
 void SparseOp::reserve(const long n) {
