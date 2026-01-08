@@ -672,7 +672,7 @@ public:
     void update(const SQuantOp &, const WfnType &, const long, const long, const long);
 
     template<class WfnType>
-    void update_diagonal(const SQuantOp &, const WfnType &, const long, const long);
+    void update_diagonal(const SQuantOp &, const WfnType &, const long);
 
     void reserve(const long);
 

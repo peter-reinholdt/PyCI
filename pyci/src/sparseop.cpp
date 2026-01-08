@@ -532,26 +532,24 @@ void SparseOp::update(const SQuantOp &ham, const WfnType &wfn, const long rows, 
 
 template<class WfnType>
 void SparseOp::py_update_diagonal(const SQuantOp &ham, const WfnType &wfn) {
-    update_diagonal<WfnType>(ham, wfn, wfn.ndet, nrow);
+    update_diagonal<WfnType>(ham, wfn, wfn.ndet);
 }
 
 template void SparseOp::py_update_diagonal(const SQuantOp &, const FullCIWfn &);
 
 template<class WfnType>
-void SparseOp::update_diagonal(const SQuantOp &ham, const WfnType &wfn, const long rows, const long startrow) {
-    nrow = rows;
-    ncol = rows;
-    diagonal.resize(nrow);
-
-    long added_rows = nrow - startrow;
+void SparseOp::update_diagonal(const SQuantOp &ham, const WfnType &wfn, const long ndet) {
+    long ndet_start = diagonal.size();
+    diagonal.resize(ndet);
+    long ndet_added = ndet - ndet_start;
     long nthread = get_num_threads();
 
-    if (nthread > added_rows) nthread = added_rows;
+    if (nthread > ndet_added) nthread = ndet_added;
 
     Vector<std::thread> v_threads;
     for (long i = 0; i < nthread; ++i) {
-        long start = startrow + end_chunk_idx(i, nthread, added_rows);
-        long end = startrow + end_chunk_idx(i + 1, nthread, added_rows);
+        long start = ndet_start + end_chunk_idx(i, nthread, ndet_added);
+        long end = ndet_start + end_chunk_idx(i + 1, nthread, ndet_added);
         v_threads.emplace_back([this, start, end, &ham, &wfn]() {
             AlignedVector<ulong> det(wfn.nword2);
             AlignedVector<long> occs(wfn.nocc);
