@@ -288,8 +288,8 @@ double py_compute_enpt2(const SQuantOp &, const WfnType &, const Array<double>, 
 struct SQuantOp final {
 public:
     long nbasis;
-    double ecore, *one_mo, *two_mo, *h, *v, *w;
-    Array<double> one_mo_array, two_mo_array, h_array, v_array, w_array;
+    double ecore, *one_mo, *two_mo, *h, *v, *w, *JKscreen, *Jscreen;
+    Array<double> one_mo_array, two_mo_array, h_array, v_array, w_array, JKscreen_array, Jscreen_array;
 
     SQuantOp(void);
 

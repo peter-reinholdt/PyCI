@@ -162,19 +162,38 @@ SQuantOp::SQuantOp(const std::string &filename) {
 
 SQuantOp::SQuantOp(const double e, const Array<double> mo1, const Array<double> mo2)
     : nbasis(mo1.request().shape[0]), ecore(e), one_mo_array(mo1), two_mo_array(mo2),
-      h_array(nbasis), v_array({nbasis, nbasis}), w_array({nbasis, nbasis}) {
+      h_array(nbasis), v_array({nbasis, nbasis}), w_array({nbasis, nbasis}),
+      JKscreen_array({nbasis, nbasis}), Jscreen_array({nbasis,nbasis}) {
     one_mo = reinterpret_cast<double *>(one_mo_array.request().ptr);
     two_mo = reinterpret_cast<double *>(two_mo_array.request().ptr);
     h = reinterpret_cast<double *>(h_array.request().ptr);
     v = reinterpret_cast<double *>(v_array.request().ptr);
     w = reinterpret_cast<double *>(w_array.request().ptr);
+    // maximum absolute value for (ii,jj) on antisymmetrized/regular 2e integrals
+    // (used for screening)
+    JKscreen = reinterpret_cast<double *>(JKscreen_array.request().ptr);
+    Jscreen = reinterpret_cast<double *>(Jscreen_array.request().ptr);
     long n1 = nbasis;
     long n2 = nbasis * n1;
     long n3 = nbasis * n2;
     long i, j, k = 0, l = 0;
+    long ii, jj, ll, kk;
     for (i = 0; i != n1; ++i) {
+        ii = i;
         h[k++] = one_mo[i * (n1 + 1)];
         for (j = 0; j != n1; ++j) {
+            jj = j;
+            double JKmax = 0.0;
+            double Jmax = 0.0;
+            for (kk = 0; kk != n1; ++kk) {
+                for (ll = 0; ll != n1; ++ll) {
+                    double aval = std::abs(two_mo[n3 * ii + n2 * kk + n1 * jj + ll] - two_mo[n3 * ii + n2 * kk + n1 * ll + jj]);
+                    JKmax = std::max(JKmax, aval);
+                    Jmax = std::max(Jmax, std::abs(two_mo[n3 * ii + n2 * kk + n1 * jj + ll]));
+                }
+            }
+            JKscreen[l] = JKmax;
+            Jscreen[l] = Jmax;
             v[l] = two_mo[i * n3 + i * n2 + j * n1 + j];
             w[l++] =
                 two_mo[i * n3 + j * n2 + i * n1 + j] * 2 - two_mo[i * n3 + j * n2 + j * n1 + i];
