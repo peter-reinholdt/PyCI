@@ -1293,6 +1293,26 @@ For Generalized CI wave functions, ``rdm1`` and ``rdm2`` are the full 1-RDM and 
 )""",
       py::arg("wfn"), py::arg("coeffs"));
 
+m.def("compute_rdm1", &py_compute_rdm1_fullci, R"""(
+Compute the one- and two- particle reduced density matrices (RDMs) of a wave function.
+
+Parameters
+----------
+wfn : pyci.wavefunction
+    Wave function.
+coeffs : numpy.ndarray
+    Coefficient vector.
+
+Returns
+-------
+d1 : numpy.ndarray
+    One-particle RDM matrix.
+
+For FullCI wave functions, the leading dimension of ``rdm1`` has length 2 and specifies the
+spin-block 0) "up-up" or 1) "down-down".
+)""",
+      py::arg("wfn"), py::arg("coeffs"));
+
 m.def("compute_rdms_1234", &py_compute_rdms_1234_doci, R"""(
 Compute the one-, two-, three-, and four-particle(not implemented yet) reduced density matrices (RDMs) of a wave function.
 

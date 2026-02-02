@@ -230,6 +230,8 @@ void compute_rdms(const FullCIWfn &, const double *, double *, double *);
 
 void compute_rdms(const GenCIWfn &, const double *, double *, double *);
 
+void compute_rdm1(const FullCIWfn &, const double *, double *);
+
 void compute_transition_rdms(const DOCIWfn &, const DOCIWfn &, const double *, const double *,
                              double *, double *);
 
@@ -262,6 +264,8 @@ pybind11::tuple py_compute_rdms_1234_doci(const DOCIWfn &, const Array<double>);
 pybind11::tuple py_compute_rdms_fullci(const FullCIWfn &, const Array<double>);
 
 pybind11::tuple py_compute_rdms_genci(const GenCIWfn &, const Array<double>);
+
+pybind11::array_t<double> py_compute_rdm1_fullci(const FullCIWfn &, const Array<double>);
 
 pybind11::tuple py_compute_transition_rdms_doci(const DOCIWfn &, const DOCIWfn &, const Array<double>,
                                            const Array<double>);
