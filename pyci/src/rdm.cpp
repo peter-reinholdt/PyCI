@@ -1088,9 +1088,92 @@ void compute_transition_rdms(const GenCIWfn &wfn1, const GenCIWfn &wfn2, const d
     }
 }
 
+void compute_transition_rdm1(const FullCIWfn &wfn1, const FullCIWfn &wfn2, const double *coeffs1, const double *coeffs2, double *rdm1) {
+    long n1 = wfn1.nbasis;
+    long n2 = wfn1.nbasis * wfn1.nbasis;
+    double *aa = rdm1;
+    double *bb = aa + n2;
+    // prepare working vectors
+    AlignedVector<ulong> v_det(wfn1.nword2);
+    AlignedVector<long> v_occs(wfn1.nocc);
+    AlignedVector<long> v_virs(wfn1.nvir);
+    ulong *det_up = &v_det[0], *det_dn = &v_det[wfn1.nword];
+    long *occs_up = &v_occs[0], *occs_dn = &v_occs[wfn1.nocc_up];
+    long *virs_up = &v_virs[0], *virs_dn = &v_virs[wfn1.nvir_up];
+    // fill rdms with zeros
+    long i = 2 * n2;
+    long j = 0;
+    while (j < i)
+        rdm1[j++] = 0;
+    // iterate over determinants
+    for (long idet = 0; idet < wfn1.ndet; ++idet) {
+        long ii, jj, jdet, sign_up, sign_down;
+        double val1, val2;
+        // fill working vectors
+        const ulong *rdet_up = wfn1.det_ptr(idet);
+        const ulong *rdet_dn = rdet_up + wfn1.nword;
+        std::memcpy(det_up, rdet_up, sizeof(ulong) * wfn1.nword2);
+        fill_occs(wfn1.nword, rdet_up, occs_up);
+        fill_occs(wfn1.nword, rdet_dn, occs_dn);
+        fill_virs(wfn1.nword, n1, rdet_up, virs_up);
+        fill_virs(wfn1.nword, n1, rdet_dn, virs_dn);
+        jdet = wfn2.index_det(det_up);
+        val1 = (jdet != -1) ? (coeffs1[idet] * coeffs2[jdet]) : 0.;
+        // loop over spin-up occupied indices
+        for (i = 0; i < wfn1.nocc_up; ++i) {
+            ii = occs_up[i];
+            // compute 0-0 terms
+            aa[(n1 + 1) * ii] += val1;
+            // loop over spin-up virtual indices
+            for (j = 0; j < wfn1.nvir_up; ++j) {
+                jj = virs_up[j];
+                // 1-0 excitation elements
+                excite_det(ii, jj, det_up);
+                sign_up = phase_single_det(wfn1.nword, ii, jj, rdet_up);
+                jdet = wfn2.index_det(det_up);
+                // check if 1-0 excited determinant is in wfn
+                if (jdet != -1) {
+                    // compute 1-0 terms
+                    val2 = coeffs1[idet] * coeffs2[jdet] * sign_up;
+                    aa[ii * n1 + jj] += val2;
+                }
+                excite_det(jj, ii, det_up);
+            }
+        }
+        // loop over spin-down occupied indices
+        for (i = 0; i < wfn1.nocc_dn; ++i) {
+            ii = occs_dn[i];
+            // compute 0-0 terms
+            bb[(n1 + 1) * ii] += val1;
+            // loop over spin-down virtual indices
+            for (j = 0; j < wfn1.nvir_dn; ++j) {
+                jj = virs_dn[j];
+                // 0-1 excitation elements
+                excite_det(ii, jj, det_dn);
+                sign_down = phase_single_det(wfn1.nword, ii, jj, rdet_dn);
+                jdet = wfn2.index_det(det_up);
+                // check if 0-1 excited determinant is in wfn
+                if (jdet != -1) {
+                    // compute 0-1 terms
+                    val2 = coeffs1[idet] * coeffs2[jdet] * sign_down;
+                    bb[ii * n1 + jj] += val2;
+                }
+                excite_det(jj, ii, det_dn);
+            }
+        }
+    }
+}
+
 pybind11::array_t<double> py_compute_rdm1_fullci(const FullCIWfn &wfn, const Array<double> coeffs) {
     Array<double> rdm1({static_cast<long>(2), wfn.nbasis, wfn.nbasis});
     compute_rdm1(wfn, reinterpret_cast<const double *>(coeffs.request().ptr),
+                 reinterpret_cast<double *>(rdm1.request().ptr));
+    return rdm1;
+}
+
+pybind11::array_t<double> py_compute_transition_rdm1_fullci(const FullCIWfn &wfn1, const FullCIWfn &wfn2, const Array<double> coeffs1, const Array<double> coeffs2) {
+    Array<double> rdm1({static_cast<long>(2), wfn1.nbasis, wfn1.nbasis});
+    compute_transition_rdm1(wfn1, wfn2, reinterpret_cast<const double *>(coeffs1.request().ptr), reinterpret_cast<const double *>(coeffs2.request().ptr),
                  reinterpret_cast<double *>(rdm1.request().ptr));
     return rdm1;
 }

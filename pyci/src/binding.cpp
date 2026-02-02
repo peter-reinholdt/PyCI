@@ -1408,6 +1408,32 @@ m.def("compute_transition_rdms", &py_compute_transition_rdms_fullci,
 m.def("compute_transition_rdms", &py_compute_transition_rdms_genci,
       py::arg("wfn1"), py::arg("wfn2"), py::arg("coeffs1"), py::arg("coeffs2"));
 
+m.def("compute_transition_rdm1", &py_compute_transition_rdm1_fullci, R"""(
+Compute the one-particle transition reduced density matrix (RDM) of two wave functions.
+
+Parameters
+----------
+wfn1 : pyci.wavefunction
+    Wave function.
+wfn2 : pyci.wavefunction
+    Wave function.
+coeffs1 : numpy.ndarray
+    Coefficient vector.
+coeffs2 : numpy.ndarray
+    Coefficient vector.
+
+Returns
+-------
+d1 : numpy.ndarray
+    One-particle TRDM matrix.
+
+Notes
+-----
+For FullCI wave functions, the leading dimension of ``rdm1`` has length 2 and specifies the
+spin-block 0) "up-up" or 1) "down-down".
+)""",
+      py::arg("wfn1"), py::arg("wfn2"), py::arg("coeffs1"), py::arg("coeffs2"));
+
 m.def("compute_enpt2", &py_compute_enpt2<DOCIWfn>, R"""(
 Compute the second-order multi-reference Epstein-Nesbet (ENPT2) energy for a wave function.
 
