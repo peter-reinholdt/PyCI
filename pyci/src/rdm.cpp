@@ -267,82 +267,102 @@ void compute_rdms_1234(const DOCIWfn &wfn, const double *coeffs, double *d0, dou
 }
 
 void compute_rdm1(const FullCIWfn &wfn, const double *coeffs, double *rdm1){
-    long n1 = wfn.nbasis;
+    auto worker = [&](const FullCIWfn &wfn, const long start, const long end, std::vector<double>*& rdm1_local){
+        // prepare working vectors
+        long n1 = wfn.nbasis;
+        long n2 = wfn.nbasis * wfn.nbasis;
+        rdm1_local = new std::vector<double>(2*n2, 0.0);
+        double *aa = rdm1_local->data();
+        double *bb = aa + wfn.nbasis * wfn.nbasis;
+        AlignedVector<ulong> v_det(wfn.nword2);
+        AlignedVector<long> v_occs(wfn.nocc);
+        AlignedVector<long> v_virs(wfn.nvir);
+        ulong *det_up = &v_det[0], *det_dn = &v_det[wfn.nword];
+        long *occs_up = &v_occs[0], *occs_dn = &v_occs[wfn.nocc_up];
+        long *virs_up = &v_virs[0], *virs_dn = &v_virs[wfn.nvir_up];
+        // iterate over determinants
+        for (long idet = start; idet < end; ++idet) {
+            const ulong *rdet_up, *rdet_dn;
+            double val1, val2;
+            long ii, jj, jdet, sign_up, sign_down;
+            // fill working vectors
+            rdet_up = wfn.det_ptr(idet);
+            rdet_dn = rdet_up + wfn.nword;
+            std::memcpy(det_up, rdet_up, sizeof(ulong) * wfn.nword2);
+            fill_occs(wfn.nword, rdet_up, occs_up);
+            fill_occs(wfn.nword, rdet_dn, occs_dn);
+            fill_virs(wfn.nword, n1, rdet_up, virs_up);
+            fill_virs(wfn.nword, n1, rdet_dn, virs_dn);
+            val1 = coeffs[idet] * coeffs[idet];
+            // loop over spin-up occupied indices
+            for (long i = 0; i < wfn.nocc_up; ++i) {
+                ii = occs_up[i];
+                // compute 0-0 terms
+                aa[(n1 + 1) * ii] += val1;
+                // loop over spin-up virtual indices
+                for (long j = 0; j < wfn.nvir_up; ++j) {
+                    jj = virs_up[j];
+                    // 1-0 excitation elements
+                    excite_det(ii, jj, det_up);
+                    sign_up = phase_single_det(wfn.nword, ii, jj, rdet_up);
+                    jdet = wfn.index_det(det_up);
+                    // check if 1-0 excited determinant is in wfn
+                    if (jdet > idet) {
+                        // compute 1-0 terms
+                        val2 = coeffs[idet] * coeffs[jdet] * sign_up;
+                        // aa(ii, jj) += val2;
+                        aa[ii * n1 + jj] += val2;
+                        aa[jj * n1 + ii] += val2;
+                    }
+                    excite_det(jj, ii, det_up);
+                }
+            }
+            // loop over spin-down occupied indices
+            for (long i = 0; i < wfn.nocc_dn; ++i) {
+                ii = occs_dn[i];
+                // compute 0-0 terms
+                bb[(n1 + 1) * ii] += val1;
+                // loop over spin-down virtual indices
+                for (long j = 0; j < wfn.nvir_dn; ++j) {
+                    jj = virs_dn[j];
+                    // 0-1 excitation elements
+                    excite_det(ii, jj, det_dn);
+                    sign_down = phase_single_det(wfn.nword, ii, jj, rdet_dn);
+                    jdet = wfn.index_det(det_up);
+                    // check if 0-1 excited determinant is in wfn
+                    if (jdet > idet) {
+                        // compute 0-1 terms
+                        val2 = coeffs[idet] * coeffs[jdet] * sign_down;
+                        // bb(ii, jj) += val2;
+                        bb[ii * n1 + jj] += val2;
+                        bb[jj * n1 + ii] += val2;
+                    }
+                    excite_det(jj, ii, det_dn);
+                }
+            }
+        }
+    };
     long n2 = wfn.nbasis * wfn.nbasis;
-    double *aa = rdm1;
-    double *bb = aa + n2;
-    // prepare working vectors
-    AlignedVector<ulong> v_det(wfn.nword2);
-    AlignedVector<long> v_occs(wfn.nocc);
-    AlignedVector<long> v_virs(wfn.nvir);
-    ulong *det_up = &v_det[0], *det_dn = &v_det[wfn.nword];
-    long *occs_up = &v_occs[0], *occs_dn = &v_occs[wfn.nocc_up];
-    long *virs_up = &v_virs[0], *virs_dn = &v_virs[wfn.nvir_up];
-    // fill rdms with zeros
-    long i = 2 * n2;
-    long j = 0;
-    while (j < i)
-        rdm1[j++] = 0;
-    // iterate over determinants
-    for (long idet = 0; idet < wfn.ndet; ++idet) {
-        const ulong *rdet_up, *rdet_dn;
-        double val1, val2;
-        long ii, jj, jdet, sign_up, sign_down;
-        // fill working vectors
-        rdet_up = wfn.det_ptr(idet);
-        rdet_dn = rdet_up + wfn.nword;
-        std::memcpy(det_up, rdet_up, sizeof(ulong) * wfn.nword2);
-        fill_occs(wfn.nword, rdet_up, occs_up);
-        fill_occs(wfn.nword, rdet_dn, occs_dn);
-        fill_virs(wfn.nword, n1, rdet_up, virs_up);
-        fill_virs(wfn.nword, n1, rdet_dn, virs_dn);
-        val1 = coeffs[idet] * coeffs[idet];
-        // loop over spin-up occupied indices
-        for (i = 0; i < wfn.nocc_up; ++i) {
-            ii = occs_up[i];
-            // compute 0-0 terms
-            aa[(n1 + 1) * ii] += val1;
-            // loop over spin-up virtual indices
-            for (j = 0; j < wfn.nvir_up; ++j) {
-                jj = virs_up[j];
-                // 1-0 excitation elements
-                excite_det(ii, jj, det_up);
-                sign_up = phase_single_det(wfn.nword, ii, jj, rdet_up);
-                jdet = wfn.index_det(det_up);
-                // check if 1-0 excited determinant is in wfn
-                if (jdet > idet) {
-                    // compute 1-0 terms
-                    val2 = coeffs[idet] * coeffs[jdet] * sign_up;
-                    // aa(ii, jj) += val2;
-                    aa[ii * n1 + jj] += val2;
-                    aa[jj * n1 + ii] += val2;
-                }
-                excite_det(jj, ii, det_up);
+    long nthread = get_num_threads();
+    if (nthread > wfn.ndet) nthread = wfn.ndet;
+
+    Vector<std::thread> v_threads;
+    v_threads.reserve(nthread);
+    std::vector<std::vector<double>*> results(nthread, nullptr);
+    for (long i = 0; i < nthread; ++i) {
+        long start = end_chunk_idx(i, nthread, wfn.ndet);
+        long end = end_chunk_idx(i + 1, nthread, wfn.ndet);
+        end = std::min(end, wfn.ndet);
+        v_threads.emplace_back([&, i, start, end](){
+                worker(wfn, start, end, results[i]);
             }
-        }
-        // loop over spin-down occupied indices
-        for (i = 0; i < wfn.nocc_dn; ++i) {
-            ii = occs_dn[i];
-            // compute 0-0 terms
-            bb[(n1 + 1) * ii] += val1;
-            // loop over spin-down virtual indices
-            for (j = 0; j < wfn.nvir_dn; ++j) {
-                jj = virs_dn[j];
-                // 0-1 excitation elements
-                excite_det(ii, jj, det_dn);
-                sign_down = phase_single_det(wfn.nword, ii, jj, rdet_dn);
-                jdet = wfn.index_det(det_up);
-                // check if 0-1 excited determinant is in wfn
-                if (jdet > idet) {
-                    // compute 0-1 terms
-                    val2 = coeffs[idet] * coeffs[jdet] * sign_down;
-                    // bb(ii, jj) += val2;
-                    bb[ii * n1 + jj] += val2;
-                    bb[jj * n1 + ii] += val2;
-                }
-                excite_det(jj, ii, det_dn);
-            }
-        }
+        );
+    }
+    std::fill(rdm1, rdm1 + 2*n2, 0.0);
+    for (auto &thread : v_threads) thread.join();
+    for (auto *result : results){
+        cblas_daxpy(2*n2, 1.0, result->data(), 1, rdm1, 1);
+        delete result;
     }
 }
 
