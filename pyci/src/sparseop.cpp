@@ -201,17 +201,12 @@ void SparseOp::perform_op_symm_mkl(const double *x, double *y) const {
 #endif
 
 template<class WfnType>
-void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const long Nint, const double eps, const double *x, double *y) const {
+void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const long Nint, const long xsize, const double eps, const double *x, double *y) const {
     // perform direct hamiltonian-vector multiply (with threshold epsilon)
     long nthread = get_num_threads();
-    long chunksize = wfn.ndet / nthread + static_cast<bool>(wfn.ndet % nthread);
-    while (nthread > 1 && chunksize < PYCI_CHUNKSIZE_MIN) {
-        nthread /= 2;
-        chunksize = wfn.ndet / nthread + static_cast<bool>(wfn.ndet % nthread);
-    }
+    if (nthread > xsize) nthread = xsize;
 
-    auto worker = [&](const SQuantOp &ham, const FullCIWfn &wfn, const long start, const long end, const long Nint, const double eps, const double *x, std::vector<double>*& y){
-        y = new std::vector<double>(wfn.ndet, 0.0);
+    auto worker = [&](const long start, const long end){
         AlignedVector<ulong> det(wfn.nword2);
         AlignedVector<long> occs(wfn.nocc);
         AlignedVector<long> virs(wfn.nvir);
@@ -264,7 +259,7 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                         is_internal = (idet < Nint) && (jdet < Nint);
                         if ((jdet != -1) && !is_internal) {
                             val *= sign_up * x[idet];
-                            y->data()[jdet] += val;
+                            std::atomic_ref<double>(y[jdet]).fetch_add(val, std::memory_order_relaxed);
                         }
                     }
                     // loop over spin-down occupied indices
@@ -284,7 +279,7 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                                     is_internal = (idet < Nint) && (jdet < Nint);
                                     if ((jdet != -1) && !is_internal) {
                                         val *= sign_up * phase_single_det(wfn.nword, kk, ll, rdet_dn) * x[idet];
-                                        y->data()[jdet] += val;
+                                        std::atomic_ref<double>(y[jdet]).fetch_add(val, std::memory_order_relaxed);
                                     }
                                     excite_det(ll, kk, det_dn);
                                 }
@@ -308,7 +303,7 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                                     is_internal = (idet < Nint) && (jdet < Nint);
                                     if ((jdet != -1) && !is_internal) {
                                         val *= phase_double_det(wfn.nword, ii, kk, jj, ll, rdet_up) * x[idet];
-                                        y->data()[jdet] += val;
+                                        std::atomic_ref<double>(y[jdet]).fetch_add(val, std::memory_order_relaxed);
                                     }
                                     excite_det(ll, kk, det_up);
                                 }
@@ -343,8 +338,8 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                         is_internal = (idet < Nint) && (jdet < Nint);
                         if ((jdet != -1) && !is_internal) {
                             val *= phase_single_det(wfn.nword, ii, jj, rdet_dn) * x[idet];
-                            y->data()[jdet] += val;
-                    }
+                            std::atomic_ref<double>(y[jdet]).fetch_add(val, std::memory_order_relaxed);
+                        }
                     }
                     // loop over spin-down occupied indices
                     if (ham.JKscreen[ii * n1 + jj] > eps_i) {
@@ -363,7 +358,7 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                                     is_internal = (idet < Nint) && (jdet < Nint);
                                     if ((jdet != -1) && !is_internal) {
                                         val *= phase_double_det(wfn.nword, ii, kk, jj, ll, rdet_dn) * x[idet];
-                                        y->data()[jdet] += val;
+                                        std::atomic_ref<double>(y[jdet]).fetch_add(val, std::memory_order_relaxed);
                                     }
                                     excite_det(ll, kk, det_dn);
                                 }
@@ -379,22 +374,16 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
 
     Vector<std::thread> v_threads;
     v_threads.reserve(nthread);
-    std::vector<std::vector<double>*> results(nthread, nullptr);
     for (long i = 0; i < nthread; ++i) {
-        long start = end_chunk_idx(i, nthread, wfn.ndet);
-        long end = end_chunk_idx(i + 1, nthread, wfn.ndet);
-        end = std::min(end, wfn.ndet);
-        v_threads.emplace_back([&, i, start, end](){
-                worker(ham, wfn, start, end, Nint, eps, x, results[i]);
+        long start = end_chunk_idx(i, nthread, xsize);
+        long end = end_chunk_idx(i + 1, nthread, xsize);
+        end = std::min(end, xsize);
+        v_threads.emplace_back([&, start, end](){
+                worker(start, end);
             }
         );
     }
-    std::fill(y, y+wfn.ndet, 0.0);
     for (auto &thread : v_threads) thread.join();
-    for (auto *result : results){
-        cblas_daxpy(wfn.ndet, 1.0, result->data(), 1, y, 1);
-        delete result;
-    }
 }
 
 void SparseOp::solve_ci(const long n, const double *coeffs, const long ncv, const long maxiter,
@@ -449,7 +438,9 @@ Array<double> SparseOp::py_matvec_out(const Array<double> x, Array<double> y) co
 template<class WfnType>
 Array<double> SparseOp::py_Vmatvec_direct(const SQuantOp &ham, const WfnType &wfn, const long Nint, const double eps, const Array<double> x) const {
     Array<double> y(wfn.ndet);
-    perform_Vop_direct(ham, wfn, Nint, eps, reinterpret_cast<const double *>(x.request().ptr),
+    auto x_info = x.request();
+    long xsize = x_info.size;
+    perform_Vop_direct(ham, wfn, Nint, xsize, eps, reinterpret_cast<const double *>(x_info.ptr),
                reinterpret_cast<double *>(y.request().ptr));
     return y;
 }

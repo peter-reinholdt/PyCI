@@ -671,7 +671,7 @@ public:
     void perform_op_symm_mkl(const double *, double *) const;
 
     template<class WfnType>
-    void perform_Vop_direct(const SQuantOp &, const WfnType &, const long, const double, const double *, double *) const;
+    void perform_Vop_direct(const SQuantOp &, const WfnType &, const long, const long, const double, const double *, double *) const;
 
     void solve_ci(const long, const double *, const long, const long, const double, double *,
                   double *) const;
