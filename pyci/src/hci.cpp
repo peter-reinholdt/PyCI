@@ -20,7 +20,7 @@ namespace pyci {
 namespace {
 
 void hci_thread_add_dets(const SQuantOp &ham, const DOCIWfn &wfn, DOCIWfn &t_wfn, const double *coeffs,
-                         const double eps, const long idet, ulong *det, long *occs, long *virs) {
+                         const double eps, const long idet, ulong *det, long *occs, long *virs, const long cvs_hole) {
     Hash rank;
     double val;
     double eps_i = eps / std::abs(coeffs[idet]);
@@ -48,7 +48,7 @@ void hci_thread_add_dets(const SQuantOp &ham, const DOCIWfn &wfn, DOCIWfn &t_wfn
 
 void hci_thread_add_dets(const SQuantOp &ham, const FullCIWfn &wfn, FullCIWfn &t_wfn,
                          const double *coeffs, const double eps, const long idet, ulong *det_up,
-                         long *occs_up, long *virs_up) {
+                         long *occs_up, long *virs_up, const long cvs_hole) {
     long i, j, k, l, ii, jj, kk, ll, ioffset, koffset;
     Hash rank;
     long n1 = wfn.nbasis;
@@ -66,6 +66,17 @@ void hci_thread_add_dets(const SQuantOp &ham, const FullCIWfn &wfn, FullCIWfn &t
     fill_occs(wfn.nword, rdet_dn, occs_dn);
     fill_virs(wfn.nword, wfn.nbasis, rdet_up, virs_up);
     fill_virs(wfn.nword, wfn.nbasis, rdet_dn, virs_dn);
+    auto cvs_valid = [&](const ulong *det) {
+        // cvs not active?
+        if (cvs_hole < 0) return true;
+        const long bits_per_word = Size<ulong>();
+        long word_index = cvs_hole / bits_per_word;
+        long bit_index = cvs_hole % bits_per_word;
+        bool alpha_is_hole = (det[word_index] & (1UL << bit_index)) == 0;
+        bool beta_is_hole = (det[wfn.nword+word_index] & (1UL << bit_index)) == 0;
+        // is there a hole in the cvs_hole?
+        return alpha_is_hole || beta_is_hole;
+    };
     // loop over spin-up occupied indices
     for (i = 0; i < wfn.nocc_up; ++i) {
         ii = occs_up[i];
@@ -88,7 +99,7 @@ void hci_thread_add_dets(const SQuantOp &ham, const FullCIWfn &wfn, FullCIWfn &t
             // add determinant if |H*c| > eps and not already in wfn
             if (std::abs(val) > eps_i) {
                 rank = wfn.rank_det(det_up);
-                if (wfn.index_det_from_rank(rank) == -1)
+                if (cvs_valid(det_up) && wfn.index_det_from_rank(rank) == -1)
                     t_wfn.add_det_with_rank(det_up, rank);
             }
             // loop over spin-down occupied indices
@@ -104,7 +115,7 @@ void hci_thread_add_dets(const SQuantOp &ham, const FullCIWfn &wfn, FullCIWfn &t
                     if (std::abs(val) > eps_i) {
                         excite_det(kk, ll, det_dn);
                         rank = wfn.rank_det(det_up);
-                        if (wfn.index_det_from_rank(rank) == -1)
+                        if (cvs_valid(det_up) && wfn.index_det_from_rank(rank) == -1)
                             t_wfn.add_det_with_rank(det_up, rank);
                         excite_det(ll, kk, det_dn);
                     }
@@ -123,7 +134,7 @@ void hci_thread_add_dets(const SQuantOp &ham, const FullCIWfn &wfn, FullCIWfn &t
                     if (std::abs(val) > eps_i) {
                         excite_det(kk, ll, det_up);
                         rank = wfn.rank_det(det_up);
-                        if (wfn.index_det_from_rank(rank) == -1)
+                        if (cvs_valid(det_up) && wfn.index_det_from_rank(rank) == -1)
                             t_wfn.add_det_with_rank(det_up, rank);
                         excite_det(ll, kk, det_up);
                     }
@@ -154,7 +165,7 @@ void hci_thread_add_dets(const SQuantOp &ham, const FullCIWfn &wfn, FullCIWfn &t
             // add determinant if |H*c| > eps and not already in wfn
             if (std::abs(val) > eps_i) {
                 rank = wfn.rank_det(det_up);
-                if (wfn.index_det_from_rank(rank) == -1)
+                if (cvs_valid(det_up) && wfn.index_det_from_rank(rank) == -1)
                     t_wfn.add_det_with_rank(det_up, rank);
             }
             // loop over spin-down occupied indices
@@ -170,7 +181,7 @@ void hci_thread_add_dets(const SQuantOp &ham, const FullCIWfn &wfn, FullCIWfn &t
                     if (std::abs(val) > eps_i) {
                         excite_det(kk, ll, det_dn);
                         rank = wfn.rank_det(det_up);
-                        if (wfn.index_det_from_rank(rank) == -1)
+                        if (cvs_valid(det_up) && wfn.index_det_from_rank(rank) == -1)
                             t_wfn.add_det_with_rank(det_up, rank);
                         excite_det(ll, kk, det_dn);
                     }
@@ -182,7 +193,7 @@ void hci_thread_add_dets(const SQuantOp &ham, const FullCIWfn &wfn, FullCIWfn &t
 }
 
 void hci_thread_add_dets(const SQuantOp &ham, const GenCIWfn &wfn, GenCIWfn &t_wfn, const double *coeffs,
-                         const double eps, const long idet, ulong *det, long *occs, long *virs) {
+                         const double eps, const long idet, ulong *det, long *occs, long *virs, const long cvs_hole) {
     Hash rank;
     long n1 = wfn.nbasis;
     long n2 = n1 * n1;
@@ -239,18 +250,18 @@ void hci_thread_add_dets(const SQuantOp &ham, const GenCIWfn &wfn, GenCIWfn &t_w
 
 template<class WfnType>
 void hci_thread(const SQuantOp &ham, const WfnType &wfn, WfnType &t_wfn, const double *coeffs,
-                const double eps, const long start, const long end) {
+                const double eps, const long start, const long end, const long cvs_hole) {
     AlignedVector<ulong> det(wfn.nword2);
     AlignedVector<long> occs(wfn.nocc);
     AlignedVector<long> virs(wfn.nvir);
     for (long i = start; i < end; ++i)
-        hci_thread_add_dets(ham, wfn, t_wfn, coeffs, eps, i, &det[0], &occs[0], &virs[0]);
+        hci_thread_add_dets(ham, wfn, t_wfn, coeffs, eps, i, &det[0], &occs[0], &virs[0], cvs_hole);
 };
 
 } // namespace
 
 template<class WfnType>
-long add_hci(const SQuantOp &ham, WfnType &wfn, const double *coeffs, const double eps, long nthread) {
+long add_hci(const SQuantOp &ham, WfnType &wfn, const double *coeffs, const double eps, long nthread, const long cvs_hole) {
     long ndet_old = wfn.ndet;
     if (nthread == -1)
         nthread = get_num_threads();
@@ -270,7 +281,7 @@ long add_hci(const SQuantOp &ham, WfnType &wfn, const double *coeffs, const doub
         end = std::min(end, ndet_old);
         v_wfns.emplace_back(wfn.nbasis, wfn.nocc_up, wfn.nocc_dn);
         v_threads.emplace_back(&hci_thread<WfnType>, std::ref(ham), std::ref(wfn),
-                               std::ref(v_wfns.back()), coeffs, eps, start, end);
+                               std::ref(v_wfns.back()), coeffs, eps, start, end, cvs_hole);
     }
     for (auto &thread : v_threads) thread.join();
     for (auto &wf : v_wfns) wfn.add_dets_from_wfn(wf);
@@ -278,26 +289,26 @@ long add_hci(const SQuantOp &ham, WfnType &wfn, const double *coeffs, const doub
     return wfn.ndet - ndet_old;
 }
 
-template long add_hci<DOCIWfn>(const SQuantOp &, DOCIWfn &, const double *, const double, long);
+template long add_hci<DOCIWfn>(const SQuantOp &, DOCIWfn &, const double *, const double, long, const long);
 
-template long add_hci<FullCIWfn>(const SQuantOp &, FullCIWfn &, const double *, const double, long);
+template long add_hci<FullCIWfn>(const SQuantOp &, FullCIWfn &, const double *, const double, long, const long);
 
-template long add_hci<GenCIWfn>(const SQuantOp &, GenCIWfn &, const double *, const double, long);
+template long add_hci<GenCIWfn>(const SQuantOp &, GenCIWfn &, const double *, const double, long, const long);
 
 template<class WfnType>
 long py_add_hci(const SQuantOp &ham, WfnType &wfn, const Array<double> coeffs, const double eps,
-                const long nthread) {
+                const long nthread, const long cvs_hole) {
     return add_hci<WfnType>(ham, wfn, reinterpret_cast<const double *>(coeffs.request().ptr), eps,
-                            nthread);
+                            nthread, cvs_hole);
 }
 
 template long py_add_hci<DOCIWfn>(const SQuantOp &, DOCIWfn &, const Array<double>, const double,
-                                  const long);
+                                  const long, const long);
 
 template long py_add_hci<FullCIWfn>(const SQuantOp &, FullCIWfn &, const Array<double>, const double,
-                                    const long);
+                                    const long, const long);
 
 template long py_add_hci<GenCIWfn>(const SQuantOp &, GenCIWfn &, const Array<double>, const double,
-                                   const long);
+                                   const long, const long);
 
 } // namespace pyci
