@@ -374,6 +374,7 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
 
     Vector<std::thread> v_threads;
     v_threads.reserve(nthread);
+    std::fill(y, y + wfn.ndet, 0.0);
     for (long i = 0; i < nthread; ++i) {
         long start = end_chunk_idx(i, nthread, xsize);
         long end = end_chunk_idx(i + 1, nthread, xsize);
