@@ -247,7 +247,7 @@ template<class WfnType>
 double compute_overlap(const WfnType &, const WfnType &, const double *, const double *);
 
 template<class WfnType>
-long add_hci(const SQuantOp &, WfnType &, const double *, const double, const long = -1);
+long add_hci(const SQuantOp &, WfnType &, const double *, const long, const double, const long = -1);
 
 template<class WfnType>
 double compute_enpt2(const SQuantOp &, const WfnType &, const double *, const double, const double,

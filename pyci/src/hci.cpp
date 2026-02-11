@@ -250,24 +250,24 @@ void hci_thread(const SQuantOp &ham, const WfnType &wfn, WfnType &t_wfn, const d
 } // namespace
 
 template<class WfnType>
-long add_hci(const SQuantOp &ham, WfnType &wfn, const double *coeffs, const double eps, long nthread) {
+long add_hci(const SQuantOp &ham, WfnType &wfn, const double *coeffs, const long size, const double eps, long nthread) {
     long ndet_old = wfn.ndet;
     if (nthread == -1)
         nthread = get_num_threads();
-    long chunksize = ndet_old / nthread + static_cast<bool>(ndet_old % nthread);
+    long chunksize = size / nthread + static_cast<bool>(size % nthread);
 
     while (nthread > 1 && chunksize < PYCI_CHUNKSIZE_MIN) {
         nthread /= 2;
-        chunksize = ndet_old / nthread + static_cast<bool>(ndet_old % nthread);
+        chunksize = size / nthread + static_cast<bool>(size % nthread);
     }
     Vector<std::thread> v_threads;
     Vector<WfnType> v_wfns;
     v_threads.reserve(nthread);
     v_wfns.reserve(nthread);
     for (long i = 0; i < nthread; ++i) {
-        long start = end_chunk_idx(i, nthread, ndet_old);
-        long end = end_chunk_idx(i + 1, nthread, ndet_old);
-        end = std::min(end, ndet_old);
+        long start = end_chunk_idx(i, nthread, size);
+        long end = end_chunk_idx(i + 1, nthread, size);
+        end = std::min(end, size);
         v_wfns.emplace_back(wfn.nbasis, wfn.nocc_up, wfn.nocc_dn);
         v_threads.emplace_back(&hci_thread<WfnType>, std::ref(ham), std::ref(wfn),
                                std::ref(v_wfns.back()), coeffs, eps, start, end);
@@ -278,16 +278,18 @@ long add_hci(const SQuantOp &ham, WfnType &wfn, const double *coeffs, const doub
     return wfn.ndet - ndet_old;
 }
 
-template long add_hci<DOCIWfn>(const SQuantOp &, DOCIWfn &, const double *, const double, long);
+template long add_hci<DOCIWfn>(const SQuantOp &, DOCIWfn &, const double *, const long, const double, long);
 
-template long add_hci<FullCIWfn>(const SQuantOp &, FullCIWfn &, const double *, const double, long);
+template long add_hci<FullCIWfn>(const SQuantOp &, FullCIWfn &, const double *, const long, const double, long);
 
-template long add_hci<GenCIWfn>(const SQuantOp &, GenCIWfn &, const double *, const double, long);
+template long add_hci<GenCIWfn>(const SQuantOp &, GenCIWfn &, const double *, const long, const double, long);
 
 template<class WfnType>
 long py_add_hci(const SQuantOp &ham, WfnType &wfn, const Array<double> coeffs, const double eps,
                 const long nthread) {
-    return add_hci<WfnType>(ham, wfn, reinterpret_cast<const double *>(coeffs.request().ptr), eps,
+    auto coeffs_info = coeffs.request();
+    long size = coeffs_info.size;
+    return add_hci<WfnType>(ham, wfn, reinterpret_cast<const double *>(coeffs_info.ptr), size, eps,
                             nthread);
 }
 

@@ -206,7 +206,7 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
     long nthread = get_num_threads();
     if (nthread > xsize) nthread = xsize;
 
-    auto worker = [&](const long start, const long end){
+    auto worker = [&](const long start, const long end, std::vector<std::pair<long, double>>& buf){
         AlignedVector<ulong> det(wfn.nword2);
         AlignedVector<long> occs(wfn.nocc);
         AlignedVector<long> virs(wfn.nvir);
@@ -259,7 +259,7 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                         is_internal = (idet < Nint) && (jdet < Nint);
                         if ((jdet != -1) && !is_internal) {
                             val *= sign_up * x[idet];
-                            std::atomic_ref<double>(y[jdet]).fetch_add(val, std::memory_order_relaxed);
+                            buf.emplace_back(jdet, val);
                         }
                     }
                     // loop over spin-down occupied indices
@@ -279,7 +279,7 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                                     is_internal = (idet < Nint) && (jdet < Nint);
                                     if ((jdet != -1) && !is_internal) {
                                         val *= sign_up * phase_single_det(wfn.nword, kk, ll, rdet_dn) * x[idet];
-                                        std::atomic_ref<double>(y[jdet]).fetch_add(val, std::memory_order_relaxed);
+                                        buf.emplace_back(jdet, val);
                                     }
                                     excite_det(ll, kk, det_dn);
                                 }
@@ -303,7 +303,7 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                                     is_internal = (idet < Nint) && (jdet < Nint);
                                     if ((jdet != -1) && !is_internal) {
                                         val *= phase_double_det(wfn.nword, ii, kk, jj, ll, rdet_up) * x[idet];
-                                        std::atomic_ref<double>(y[jdet]).fetch_add(val, std::memory_order_relaxed);
+                                        buf.emplace_back(jdet, val);
                                     }
                                     excite_det(ll, kk, det_up);
                                 }
@@ -338,7 +338,7 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                         is_internal = (idet < Nint) && (jdet < Nint);
                         if ((jdet != -1) && !is_internal) {
                             val *= phase_single_det(wfn.nword, ii, jj, rdet_dn) * x[idet];
-                            std::atomic_ref<double>(y[jdet]).fetch_add(val, std::memory_order_relaxed);
+                            buf.emplace_back(jdet, val);
                         }
                     }
                     // loop over spin-down occupied indices
@@ -358,7 +358,7 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                                     is_internal = (idet < Nint) && (jdet < Nint);
                                     if ((jdet != -1) && !is_internal) {
                                         val *= phase_double_det(wfn.nword, ii, kk, jj, ll, rdet_dn) * x[idet];
-                                        std::atomic_ref<double>(y[jdet]).fetch_add(val, std::memory_order_relaxed);
+                                        buf.emplace_back(jdet, val);
                                     }
                                     excite_det(ll, kk, det_dn);
                                 }
@@ -369,18 +369,43 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                 }
             }
         }
+        // sort
+        std::sort(buf.begin(), buf.end(),
+                  [](auto &a, auto &b){ return a.first < b.first; });
+        // compress
+        size_t w = 0;
+        for (size_t r = 1; r < buf.size(); ++r) {
+            if (buf[w].first == buf[r].first)
+                buf[w].second += buf[r].second;
+            else
+                buf[++w] = buf[r];
+        }
+        buf.resize(w+1);
     };
 
 
     Vector<std::thread> v_threads;
     v_threads.reserve(nthread);
+
+    std::atomic<long> next_chunk(0);
+    long num_chunks = 8 * nthread;
     std::fill(y, y + wfn.ndet, 0.0);
+
     for (long i = 0; i < nthread; ++i) {
-        long start = end_chunk_idx(i, nthread, xsize);
-        long end = end_chunk_idx(i + 1, nthread, xsize);
-        end = std::min(end, xsize);
-        v_threads.emplace_back([&, start, end](){
-                worker(start, end);
+        v_threads.emplace_back([&](){
+            std::vector<std::pair<long,double>> buf;
+            while (true){
+                long ichunk = next_chunk.fetch_add(1);
+                if (ichunk >= num_chunks) {
+                    break;
+                }
+                long start = end_chunk_idx(ichunk, num_chunks, xsize);
+                long end = end_chunk_idx(ichunk + 1, num_chunks, xsize);
+                end = std::min(end, xsize);
+                buf.clear();
+                worker(start, end, buf);
+                for (auto &[j,v] : buf) std::atomic_ref<double>(y[j]).fetch_add(v, std::memory_order_relaxed);
+                }
             }
         );
     }
