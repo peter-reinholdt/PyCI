@@ -241,4 +241,133 @@ void SQuantOp::to_file(const std::string &filename, const long nelec, const long
     f << std::setw(28) << std::setprecision(20) << std::scientific << ecore << " 0 0 0 0\n";
 }
 
+template<class WfnType>
+void SQuantOp::perform_one_electron_direct(const WfnType &wfn, const long xsize, const bool triplet, const double *x, double *y) const {
+    auto worker = [&](const long start, const long end, std::vector<std::pair<long, double>>& buf){
+        AlignedVector<ulong> det(wfn.nword2);
+        AlignedVector<long> occs(wfn.nocc);
+        AlignedVector<long> virs(wfn.nvir);
+        long i, j, ii, jj, sign_up;
+        long jdet;
+        long n1 = wfn.nbasis;
+        double val, diag;
+        ulong *det_up = &det[0];
+        ulong *det_dn = det_up + wfn.nword;
+        long *occs_up = &occs[0];
+        long *occs_dn = occs_up + wfn.nocc_up;
+        long *virs_up = &virs[0];
+        long *virs_dn = virs_up + wfn.nvir_up;
+        const double sign_triplet = triplet ? -1.0 : 1.0;
+        const double very_small = 1e-12;
+        for (long idet = start; idet<end; idet++){
+            diag = 0.0;
+            const ulong *rdet_up = wfn.det_ptr(idet);
+            const ulong *rdet_dn = rdet_up + wfn.nword;
+            std::memcpy(det_up, rdet_up, sizeof(ulong) * wfn.nword2);
+            fill_occs(wfn.nword, rdet_up, occs_up);
+            fill_occs(wfn.nword, rdet_dn, occs_dn);
+            fill_virs(wfn.nword, wfn.nbasis, rdet_up, virs_up);
+            fill_virs(wfn.nword, wfn.nbasis, rdet_dn, virs_dn);
+            // loop over spin-up occupied indices
+            for (i = 0; i < wfn.nocc_up; ++i) {
+                ii = occs_up[i];
+                diag += one_mo[(wfn.nbasis + 1) * ii];
+                // loop over spin-up virtual indices
+                for (j = 0; j < wfn.nvir_up; ++j) {
+                    jj = virs_up[j];
+                    val = one_mo[n1 * ii + jj];
+                    if (std::abs(val) < very_small) {
+                        continue;
+                    }
+                    // 1-0 excitation elements
+                    excite_det(ii, jj, det_up);
+                    sign_up = phase_single_det(wfn.nword, ii, jj, rdet_up);
+                    jdet = wfn.index_det(det_up);
+                    if (jdet != -1) {
+                        val *= sign_up * x[idet];
+                        buf.emplace_back(jdet, val);
+                    }
+                    excite_det(jj, ii, det_up);
+                }
+            }
+            // loop over spin-down occupied indices
+            for (i = 0; i < wfn.nocc_dn; ++i) {
+                ii = occs_dn[i];
+                diag += sign_triplet * one_mo[(wfn.nbasis + 1) * ii];
+                // loop over spin-down virtual indices
+                for (j = 0; j < wfn.nvir_dn; ++j) {
+                    jj = virs_dn[j];
+                    val = one_mo[n1 * ii + jj];
+                    if (std::abs(val) < very_small) {
+                        continue;
+                    }
+                    // 0-1 excitation elements
+                    excite_det(ii, jj, det_dn);
+                    jdet = wfn.index_det(det_up);
+                    if (jdet != -1) {
+                        val *= sign_triplet * phase_single_det(wfn.nword, ii, jj, rdet_dn) * x[idet];
+                        buf.emplace_back(jdet, val);
+                    }
+                    excite_det(jj, ii, det_dn);
+                }
+            }
+            buf.emplace_back(idet, diag*x[idet]);
+        }
+        // sort
+        std::sort(buf.begin(), buf.end(),
+                  [](auto &a, auto &b){ return a.first < b.first; });
+        // compress
+        size_t w = 0;
+        for (size_t r = 1; r < buf.size(); ++r) {
+            if (buf[w].first == buf[r].first)
+                buf[w].second += buf[r].second;
+            else
+                buf[++w] = buf[r];
+        }
+        buf.resize(w+1);
+
+    };
+    long nthread = get_num_threads();
+    if (nthread > xsize) nthread = xsize;
+    Vector<std::thread> v_threads;
+    v_threads.reserve(nthread);
+
+    std::atomic<long> next_chunk(0);
+    long num_chunks = 8 * nthread;
+    std::fill(y, y + wfn.ndet, 0.0);
+
+    for (long i = 0; i < nthread; ++i) {
+        v_threads.emplace_back([&](){
+            std::vector<std::pair<long,double>> buf;
+            while (true){
+                long ichunk = next_chunk.fetch_add(1);
+                if (ichunk >= num_chunks) {
+                    break;
+                }
+                long start = end_chunk_idx(ichunk, num_chunks, xsize);
+                long end = end_chunk_idx(ichunk + 1, num_chunks, xsize);
+                end = std::min(end, xsize);
+                buf.clear();
+                worker(start, end, buf);
+                for (auto &[j,v] : buf) std::atomic_ref<double>(y[j]).fetch_add(v, std::memory_order_relaxed);
+                }
+            }
+        );
+    }
+    for (auto &thread : v_threads) thread.join();
+}
+
+template<class WfnType>
+Array<double> SQuantOp::py_one_electron_direct(const WfnType &wfn, const Array<double> x, const bool triplet) const {
+    Array<double> y(wfn.ndet);
+    auto x_info = x.request();
+    long xsize = x_info.size;
+    perform_one_electron_direct(wfn, xsize, triplet, reinterpret_cast<const double *>(x_info.ptr), reinterpret_cast<double *>(y.request().ptr));
+    return y;
+}
+
+template Array<double> SQuantOp::py_one_electron_direct(const FullCIWfn &wfn, const Array<double> x, const bool triplet) const ;
+
+
+
 } // namespace pyci

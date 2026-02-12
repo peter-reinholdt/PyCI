@@ -205,6 +205,33 @@ tol : float, default=0.0
                 py::arg("filename"), py::arg("nelec") = 0, py::arg("ms2") = 0,
                 py::arg("tol") = 0.0);
 
+secondquant_op.def("one_electron_direct", &SQuantOp::py_one_electron_direct<FullCIWfn>, R"""(
+Compute the direct matrix vector product of the one-electron operator with with vector ``x``.
+
+.. math::
+
+    A \mathbf{x} = \mathbf{y}
+
+Parameters
+----------
+ham : pyci.secondquant_op
+    Hamiltonian.
+wfn : pyci.wavefunction
+    Wave function.
+x : numpy.ndarray
+    Vector to which the operator will be applied.
+triplet: bool, default=False
+    When true, the one-electron operator is triplet, otherwise singlet
+
+Returns
+-------
+y : numpy.ndarray
+    Result vector.
+
+)""",
+py::arg("wfn"), py::arg("x"), py::arg("triplet") = false);
+
+
 /*
 Section: Wavefunction class
 */
@@ -1067,6 +1094,14 @@ Compute the direct V matrix vector product with vector ``x``.
 
 Parameters
 ----------
+ham : pyci.secondquant_op
+    Hamiltonian.
+wfn : pyci.wavefunction
+    Wave function.
+Nint: integer
+    Number of internal determinants.
+eps : float
+    :math:`\epsilon` value for matrix-vector multiplication routine.
 x : numpy.ndarray
     Vector to which the operator will be applied.
 
@@ -1083,6 +1118,7 @@ y : numpy.ndarray
               py::arg("x"));
 
 sparse_op.def("Vmatvec_direct", &SparseOp::py_Vmatvec_direct<FullCIWfn>, py::arg("ham"), py::arg("wfn"), py::arg("Nint"), py::arg("eps"), py::arg("x"));
+
 
 sparse_op.def("get_element", &SparseOp::get_element, R"""(
 Return the :math:`\left(i, j\right)`-th element of the sparse matrix operator.

@@ -310,6 +310,12 @@ public:
     SQuantOp(const double, const Array<double>, const Array<double>);
 
     void to_file(const std::string &, const long, const long, const double) const;
+
+    template<class WfnType>
+    void perform_one_electron_direct(const WfnType &, const long, const bool, const double *, double *) const;
+
+    template<class WfnType>
+    Array<double> py_one_electron_direct(const WfnType &, const Array<double>, const bool) const;
 };
 
 /* Wave function classes. */
