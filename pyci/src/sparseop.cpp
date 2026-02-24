@@ -388,7 +388,8 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
     v_threads.reserve(nthread);
 
     std::atomic<long> next_chunk(0);
-    long num_chunks = 8 * nthread;
+    long num_chunks = xsize / PYCI_CHUNKSIZE_MIN;
+    std::cout << "num_chunks= " << num_chunks << std::endl;
     std::fill(y, y + wfn.ndet, 0.0);
 
     for (long i = 0; i < nthread; ++i) {

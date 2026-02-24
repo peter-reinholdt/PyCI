@@ -333,7 +333,7 @@ void SQuantOp::perform_one_electron_direct(const WfnType &wfn, const long xsize,
     v_threads.reserve(nthread);
 
     std::atomic<long> next_chunk(0);
-    long num_chunks = 8 * nthread;
+    long num_chunks = xsize / PYCI_CHUNKSIZE_MIN;
     std::fill(y, y + wfn.ndet, 0.0);
 
     for (long i = 0; i < nthread; ++i) {
