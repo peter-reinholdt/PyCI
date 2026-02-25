@@ -203,9 +203,6 @@ void SparseOp::perform_op_symm_mkl(const double *x, double *y) const {
 template<class WfnType>
 void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const long Nint, const long xsize, const double eps, const double *x, double *y) const {
     // perform direct hamiltonian-vector multiply (with threshold epsilon)
-    long nthread = get_num_threads();
-    if (nthread > xsize) nthread = xsize;
-
     auto worker = [&](const long start, const long end, std::vector<std::pair<long, double>>& buf){
         AlignedVector<ulong> det(wfn.nword2);
         AlignedVector<long> occs(wfn.nocc);
@@ -369,27 +366,15 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                 }
             }
         }
-        // sort
-        std::sort(buf.begin(), buf.end(),
-                  [](auto &a, auto &b){ return a.first < b.first; });
-        // compress
-        size_t w = 0;
-        for (size_t r = 1; r < buf.size(); ++r) {
-            if (buf[w].first == buf[r].first)
-                buf[w].second += buf[r].second;
-            else
-                buf[++w] = buf[r];
-        }
-        buf.resize(w+1);
     };
 
 
+    long nthread = get_num_threads();
     Vector<std::thread> v_threads;
     v_threads.reserve(nthread);
 
     std::atomic<long> next_chunk(0);
-    long num_chunks = xsize / PYCI_CHUNKSIZE_MIN;
-    std::cout << "num_chunks= " << num_chunks << std::endl;
+    long num_chunks = 1 + xsize / PYCI_CHUNKSIZE_MIN;
     std::fill(y, y + wfn.ndet, 0.0);
 
     for (long i = 0; i < nthread; ++i) {

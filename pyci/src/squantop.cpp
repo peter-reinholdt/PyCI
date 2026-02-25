@@ -313,19 +313,6 @@ void SQuantOp::perform_one_electron_direct(const WfnType &wfn, const long xsize,
             }
             buf.emplace_back(idet, diag*x[idet]);
         }
-        // sort
-        std::sort(buf.begin(), buf.end(),
-                  [](auto &a, auto &b){ return a.first < b.first; });
-        // compress
-        size_t w = 0;
-        for (size_t r = 1; r < buf.size(); ++r) {
-            if (buf[w].first == buf[r].first)
-                buf[w].second += buf[r].second;
-            else
-                buf[++w] = buf[r];
-        }
-        buf.resize(w+1);
-
     };
     long nthread = get_num_threads();
     if (nthread > xsize) nthread = xsize;
@@ -333,7 +320,7 @@ void SQuantOp::perform_one_electron_direct(const WfnType &wfn, const long xsize,
     v_threads.reserve(nthread);
 
     std::atomic<long> next_chunk(0);
-    long num_chunks = xsize / PYCI_CHUNKSIZE_MIN;
+    long num_chunks = 1 + xsize / PYCI_CHUNKSIZE_MIN;
     std::fill(y, y + wfn.ndet, 0.0);
 
     for (long i = 0; i < nthread; ++i) {
