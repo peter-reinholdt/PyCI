@@ -178,22 +178,30 @@ SQuantOp::SQuantOp(const double e, const Array<double> mo1, const Array<double> 
     long n3 = nbasis * n2;
     long i, j, k = 0, l = 0;
     long ii, jj, ll, kk;
+    hmax = 0.0;
+    Jmax = 0.0;
+    JKmax = 0.0;
     for (i = 0; i != n1; ++i) {
         ii = i;
         h[k++] = one_mo[i * (n1 + 1)];
         for (j = 0; j != n1; ++j) {
             jj = j;
-            double JKmax = 0.0;
-            double Jmax = 0.0;
+            double JKmax_ij = 0.0;
+            double Jmax_ij = 0.0;
             for (kk = 0; kk != n1; ++kk) {
                 for (ll = 0; ll != n1; ++ll) {
                     double aval = std::abs(two_mo[n3 * ii + n2 * kk + n1 * jj + ll] - two_mo[n3 * ii + n2 * kk + n1 * ll + jj]);
-                    JKmax = std::max(JKmax, aval);
-                    Jmax = std::max(Jmax, std::abs(two_mo[n3 * ii + n2 * kk + n1 * jj + ll]));
+                    JKmax_ij = std::max(JKmax_ij, aval);
+                    Jmax_ij = std::max(Jmax_ij, std::abs(two_mo[n3 * ii + n2 * kk + n1 * jj + ll]));
                 }
             }
-            JKscreen[l] = JKmax;
-            Jscreen[l] = Jmax;
+            JKscreen[l] = JKmax_ij;
+            Jscreen[l] = Jmax_ij;
+            JKmax = std::max(JKmax_ij, JKmax);
+            Jmax = std::max(Jmax_ij, Jmax);
+            if (i != j){
+                hmax = std::max(hmax, std::abs(one_mo[j * n1 + i]));
+            }
             v[l] = two_mo[i * n3 + i * n2 + j * n1 + j];
             w[l++] =
                 two_mo[i * n3 + j * n2 + i * n1 + j] * 2 - two_mo[i * n3 + j * n2 + j * n1 + i];
