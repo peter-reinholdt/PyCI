@@ -214,26 +214,26 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
         long n3 = n1 * n2;
         double val;
         double eps_i;
-        double bound;
         double hbound = ham.hmax + std::max(wfn.nocc_up * ham.JKmax + wfn.nocc_dn * ham.Jmax,
                                             wfn.nocc_up * ham.Jmax + wfn.nocc_dn * ham.JKmax);
         bool is_internal;
-        ulong *det_up = &det[0];
-        ulong *det_dn = det_up + wfn.nword;
         long *occs_up = &occs[0];
         long *occs_dn = occs_up + wfn.nocc_up;
         long *virs_up = &virs[0];
         long *virs_dn = virs_up + wfn.nvir_up;
+        Hash idet_hash, jdet_hash, kdet_hash;
+        bool ALPHA = true;
+        bool BETA = false;
         for (long idet = start; idet<end; idet++){
             eps_i = eps / std::abs(x[idet]);
             if (eps_i >= hbound) continue;
             const ulong *rdet_up = wfn.det_ptr(idet);
             const ulong *rdet_dn = rdet_up + wfn.nword;
-            std::memcpy(det_up, rdet_up, sizeof(ulong) * wfn.nword2);
             fill_occs(wfn.nword, rdet_up, occs_up);
             fill_occs(wfn.nword, rdet_dn, occs_dn);
             fill_virs(wfn.nword, wfn.nbasis, rdet_up, virs_up);
             fill_virs(wfn.nword, wfn.nbasis, rdet_dn, virs_dn);
+            idet_hash = wfn.zobristhash(wfn.nword2, rdet_up);
             // loop over spin-up occupied indices
             for (i = 0; i < wfn.nocc_up; ++i) {
                 ii = occs_up[i];
@@ -242,10 +242,12 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                 for (j = 0; j < wfn.nvir_up; ++j) {
                     jj = virs_up[j];
                     // 1-0 excitation elements
-                    excite_det(ii, jj, det_up);
+                    jdet_hash = wfn.excite_hash(idet_hash, ii, jj, ALPHA);
+                    jdet = wfn.index_det_from_rank(jdet_hash);
+                    is_internal = (idet < Nint) && (jdet < Nint);
                     sign_up = phase_single_det(wfn.nword, ii, jj, rdet_up);
-                    bound = std::abs(ham.one_mo[n1 * ii + jj]) + wfn.nocc_up * ham.JKscreen[ii * n1 + jj] + wfn.nocc_dn * ham.Jscreen[ii * n1 + jj];
-                    if (bound >= eps_i) {
+                    //bound = std::abs(ham.one_mo[n1 * ii + jj]) + wfn.nocc_up * ham.JKscreen[ii * n1 + jj] + wfn.nocc_dn * ham.Jscreen[ii * n1 + jj];
+                    if (jdet != -1 && !is_internal && std::abs(ham.one_mo[n1 * ii + jj]) + wfn.nocc_up * ham.JKscreen[ii * n1 + jj] + wfn.nocc_dn * ham.Jscreen[ii * n1 + jj] >= eps_i) {
                         val = ham.one_mo[n1 * ii + jj];
                         for (k = 0; k < wfn.nocc_up; ++k) {
                             kk = occs_up[k];
@@ -258,12 +260,8 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                         }
                         // add contribution if |H*c| > eps
                         if (std::abs(val) > eps_i) {
-                            jdet = wfn.index_det(det_up);
-                            is_internal = (idet < Nint) && (jdet < Nint);
-                            if ((jdet != -1) && !is_internal) {
-                                val *= sign_up * x[idet];
-                                buf.emplace_back(jdet, val);
-                            }
+                            val *= sign_up * x[idet];
+                            buf.emplace_back(jdet, val);
                         }
                     }
                     // loop over spin-down occupied indices
@@ -277,15 +275,13 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                                 // 1-1 excitation elements
                                 val = ham.two_mo[koffset + n1 * jj + ll];
                                 if (std::abs(val) > eps_i) {
-                                    excite_det(kk, ll, det_dn);
-                                    // add contribution if |H*c| > eps
-                                    jdet = wfn.index_det(det_up);
+                                    kdet_hash = wfn.excite_hash(jdet_hash, kk, ll, BETA);
+                                    jdet = wfn.index_det_from_rank(kdet_hash);
                                     is_internal = (idet < Nint) && (jdet < Nint);
                                     if ((jdet != -1) && !is_internal) {
                                         val *= sign_up * phase_single_det(wfn.nword, kk, ll, rdet_dn) * x[idet];
                                         buf.emplace_back(jdet, val);
                                     }
-                                    excite_det(ll, kk, det_dn);
                                 }
                             }
                         }
@@ -301,20 +297,18 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                                 // 2-0 excitation elements
                                 val = ham.two_mo[koffset + n1 * jj + ll] - ham.two_mo[koffset + n1 * ll + jj];
                                 if (std::abs(val) > eps_i) {
-                                    excite_det(kk, ll, det_up);
-                                    // add contribution if |H*c| > eps
-                                    jdet = wfn.index_det(det_up);
+                                    kdet_hash = wfn.excite_hash(jdet_hash, kk, ll, ALPHA);
+                                    jdet = wfn.index_det_from_rank(kdet_hash);
                                     is_internal = (idet < Nint) && (jdet < Nint);
+                                    // add contribution if |H*c| > eps
                                     if ((jdet != -1) && !is_internal) {
                                         val *= phase_double_det(wfn.nword, ii, kk, jj, ll, rdet_up) * x[idet];
                                         buf.emplace_back(jdet, val);
                                     }
-                                    excite_det(ll, kk, det_up);
                                 }
                             }
                         }
                     }
-                    excite_det(jj, ii, det_up);
                 }
             }
             // loop over spin-down occupied indices
@@ -325,9 +319,11 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                 for (j = 0; j < wfn.nvir_dn; ++j) {
                     jj = virs_dn[j];
                     // 0-1 excitation elements
-                    excite_det(ii, jj, det_dn);
-                    bound = std::abs(ham.one_mo[n1 * ii + jj]) + wfn.nocc_up * ham.Jscreen[ii * n1 + jj] + wfn.nocc_dn * ham.JKscreen[ii * n1 + jj];
-                    if (bound >= eps_i) {
+                    jdet_hash = wfn.excite_hash(idet_hash, ii, jj, BETA);
+                    jdet = wfn.index_det_from_rank(jdet_hash);
+                    is_internal = (idet < Nint) && (jdet < Nint);
+                    //bound = std::abs(ham.one_mo[n1 * ii + jj]) + wfn.nocc_up * ham.Jscreen[ii * n1 + jj] + wfn.nocc_dn * ham.JKscreen[ii * n1 + jj];
+                    if (jdet != -1 && !is_internal && std::abs(ham.one_mo[n1 * ii + jj]) + wfn.nocc_up * ham.Jscreen[ii * n1 + jj] + wfn.nocc_dn * ham.JKscreen[ii * n1 + jj] >= eps_i) {
                         val = ham.one_mo[n1 * ii + jj];
                         for (k = 0; k < wfn.nocc_up; ++k) {
                             kk = occs_up[k];
@@ -340,12 +336,8 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                         }
                         // add contribution if |H*c| > eps
                         if (std::abs(val) > eps_i) {
-                            jdet = wfn.index_det(det_up);
-                            is_internal = (idet < Nint) && (jdet < Nint);
-                            if ((jdet != -1) && !is_internal) {
-                                val *= phase_single_det(wfn.nword, ii, jj, rdet_dn) * x[idet];
-                                buf.emplace_back(jdet, val);
-                            }
+                            val *= phase_single_det(wfn.nword, ii, jj, rdet_dn) * x[idet];
+                            buf.emplace_back(jdet, val);
                         }
                     }
                     // loop over spin-down occupied indices
@@ -359,20 +351,18 @@ void SparseOp::perform_Vop_direct(const SQuantOp &ham, const WfnType &wfn, const
                                 // 0-2 excitation elements
                                 val = ham.two_mo[koffset + n1 * jj + ll] - ham.two_mo[koffset + n1 * ll + jj];
                                 if (std::abs(val) > eps_i) {
-                                    excite_det(kk, ll, det_dn);
                                     // add determinant if |H*c| > eps and not already in wfn
-                                    jdet = wfn.index_det(det_up);
+                                    kdet_hash = wfn.excite_hash(jdet_hash, kk, ll, BETA);
+                                    jdet = wfn.index_det_from_rank(kdet_hash);
                                     is_internal = (idet < Nint) && (jdet < Nint);
                                     if ((jdet != -1) && !is_internal) {
                                         val *= phase_double_det(wfn.nword, ii, kk, jj, ll, rdet_dn) * x[idet];
                                         buf.emplace_back(jdet, val);
                                     }
-                                    excite_det(ll, kk, det_dn);
                                 }
                             }
                         }
                     }
-                    excite_det(jj, ii, det_dn);
                 }
             }
         }
