@@ -28,6 +28,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <random>
 
 #define EIGEN_DEFAULT_DENSE_INDEX_TYPE long
 #include <Eigen/Core>
@@ -40,8 +41,6 @@
 #include <pybind11/pybind11.h>
 
 #include <parallel_hashmap/phmap.h>
-
-#include <SpookyV2.h>
 
 #include <sort_with_arg.h>
 
@@ -123,13 +122,6 @@ inline int Ctz(const unsigned long long t) {
 
 typedef std::pair<ulong, ulong> Hash;
 
-template<typename T, typename U>
-Hash spookyhash(T length, const U *data) {
-    Hash h(0x23a23cf5033c3c81UL, 0xb3816f6a2c68e530UL);
-    SpookyHash::Hash128(reinterpret_cast<const void *>(data), length * sizeof(U), &h.first, &h.second);
-    return h;
-}
-
 /* Vector template types. */
 
 template<typename T>
@@ -155,9 +147,14 @@ template<typename T>
 using CDenseVector = Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, 1>>;
 
 /* Hash map template type. */
+struct IdentityHash {
+    size_t operator()(const Hash& h) const {
+        return h.first ^ h.second;
+    }
+};
 
 template<class KeyType, class ValueType>
-using HashMap = phmap::flat_hash_map<KeyType, ValueType>;
+using HashMap = phmap::flat_hash_map<KeyType, ValueType, IdentityHash>;
 
 /* Pybind11 NumPy array types. */
 
@@ -328,6 +325,7 @@ public:
 protected:
     AlignedVector<ulong> dets;
     HashMap<Hash, long> dict;
+    std::vector<uint64_t> zobrist_table;
 
 public:
     Wfn(const Wfn &);
@@ -340,10 +338,15 @@ public:
 
     void squeeze(void);
 
+    Hash zobristhash(const size_t, const ulong*) const;
+    
+    Hash excite_hash(Hash, const long, const long, const bool) const;
+
 protected:
     Wfn(void);
 
     void init(const long, const long, const long);
+    void init_zobrist(void);
 };
 
 struct OneSpinWfn : public Wfn {

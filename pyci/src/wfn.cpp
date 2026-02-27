@@ -46,6 +46,38 @@ void Wfn::squeeze(void) {
     dets.shrink_to_fit();
 }
 
+void Wfn::init_zobrist(void) {
+    zobrist_table.resize(128 * nword2);
+    std::mt19937_64 rng(0x23a23cf5033c3c81UL);
+    for (long i = 0; i < 128 * nword2; i++) {
+        zobrist_table[i] = rng();
+    }
+}
+
+Hash Wfn::zobristhash(const size_t length, const ulong* det) const {
+    uint64_t h1 = 0;
+    uint64_t h2 = 0;
+    for (size_t word = 0; word < length; word++) {
+        ulong bits = det[word];
+        while (bits) {
+            size_t ibit = std::countr_zero(bits);
+            h1 ^= zobrist_table[word * 64 + ibit];
+            h2 ^= zobrist_table[(nword2 + word) * 64 + ibit];
+            bits &= (bits - 1);
+        }
+    }
+    return {h1, h2};
+}
+
+Hash Wfn::excite_hash(const Hash ref_hash, const long i, const long j, const bool spin_up) const {
+    uint64_t h1 = ref_hash.first;
+    uint64_t h2 = ref_hash.second;
+    long offset = spin_up ? 0 : nword;
+    h1 = h1 ^ zobrist_table[offset * 64 + i] ^ zobrist_table[offset * 64 + j];
+    h2 = h2 ^ zobrist_table[(offset + nword2) * 64 + i] ^ zobrist_table[(offset + nword2) * 64 + j];
+    return {h1, h2};
+}
+
 Wfn::Wfn(void){};
 
 void Wfn::init(const long nb, const long nu, const long nd) {
@@ -67,6 +99,7 @@ void Wfn::init(const long nb, const long nu, const long nd) {
     nword2 = nword * 2;
     maxrank_up = binomial(nb, nu);
     maxrank_dn = binomial(nb, nd);
+    init_zobrist();
 }
 
 } // namespace pyci

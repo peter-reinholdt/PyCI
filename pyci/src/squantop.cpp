@@ -255,7 +255,7 @@ void SQuantOp::perform_one_electron_direct(const WfnType &wfn, const long xsize,
         AlignedVector<ulong> det(wfn.nword2);
         AlignedVector<long> occs(wfn.nocc);
         AlignedVector<long> virs(wfn.nvir);
-        long i, j, ii, jj, sign_up;
+        long i, j, ii, jj;
         long jdet;
         long n1 = wfn.nbasis;
         double val, diag;
@@ -267,10 +267,12 @@ void SQuantOp::perform_one_electron_direct(const WfnType &wfn, const long xsize,
         long *virs_dn = virs_up + wfn.nvir_up;
         const double sign_triplet = triplet ? -1.0 : 1.0;
         const double very_small = 1e-12;
+        Hash idet_hash, jdet_hash;
         for (long idet = start; idet<end; idet++){
             diag = 0.0;
             const ulong *rdet_up = wfn.det_ptr(idet);
             const ulong *rdet_dn = rdet_up + wfn.nword;
+            idet_hash = wfn.zobristhash(wfn.nword2, rdet_up);
             std::memcpy(det_up, rdet_up, sizeof(ulong) * wfn.nword2);
             fill_occs(wfn.nword, rdet_up, occs_up);
             fill_occs(wfn.nword, rdet_dn, occs_dn);
@@ -288,14 +290,14 @@ void SQuantOp::perform_one_electron_direct(const WfnType &wfn, const long xsize,
                         continue;
                     }
                     // 1-0 excitation elements
-                    excite_det(ii, jj, det_up);
-                    sign_up = phase_single_det(wfn.nword, ii, jj, rdet_up);
-                    jdet = wfn.index_det(det_up);
+                    jdet_hash = wfn.excite_hash(idet_hash, ii, jj, true);
+                    jdet = wfn.index_det_from_rank(jdet_hash);
                     if (jdet != -1) {
-                        val *= sign_up * x[idet];
+                        excite_det(ii, jj, det_up);
+                        val *= phase_single_det(wfn.nword, ii, jj, rdet_up) * x[idet];
                         buf.emplace_back(jdet, val);
+                        excite_det(jj, ii, det_up);
                     }
-                    excite_det(jj, ii, det_up);
                 }
             }
             // loop over spin-down occupied indices
@@ -310,13 +312,14 @@ void SQuantOp::perform_one_electron_direct(const WfnType &wfn, const long xsize,
                         continue;
                     }
                     // 0-1 excitation elements
-                    excite_det(ii, jj, det_dn);
-                    jdet = wfn.index_det(det_up);
+                    jdet_hash = wfn.excite_hash(idet_hash, ii, jj, false);
+                    jdet = wfn.index_det_from_rank(jdet_hash);
                     if (jdet != -1) {
+                        excite_det(ii, jj, det_dn);
                         val *= sign_triplet * phase_single_det(wfn.nword, ii, jj, rdet_dn) * x[idet];
                         buf.emplace_back(jdet, val);
+                        excite_det(jj, ii, det_dn);
                     }
-                    excite_det(jj, ii, det_dn);
                 }
             }
             buf.emplace_back(idet, diag*x[idet]);
