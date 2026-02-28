@@ -222,6 +222,8 @@ x : numpy.ndarray
     Vector to which the operator will be applied.
 triplet: bool, default=False
     When true, the one-electron operator is triplet, otherwise singlet
+eps : float 
+    :math:`\epsilon` value for matrix-vector multiplication routine.
 
 Returns
 -------
@@ -229,7 +231,7 @@ y : numpy.ndarray
     Result vector.
 
 )""",
-py::arg("wfn"), py::arg("x"), py::arg("triplet") = false);
+py::arg("wfn"), py::arg("x"), py::arg("triplet") = false, py::arg("eps") = 1e-12);
 
 
 /*

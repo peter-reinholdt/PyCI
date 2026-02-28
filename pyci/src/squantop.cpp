@@ -163,7 +163,7 @@ SQuantOp::SQuantOp(const std::string &filename) {
 SQuantOp::SQuantOp(const double e, const Array<double> mo1, const Array<double> mo2)
     : nbasis(mo1.request().shape[0]), ecore(e), one_mo_array(mo1), two_mo_array(mo2),
       h_array(nbasis), v_array({nbasis, nbasis}), w_array({nbasis, nbasis}),
-      JKscreen_array({nbasis, nbasis}), Jscreen_array({nbasis,nbasis}) {
+      JKscreen_array({nbasis, nbasis}), Jscreen_array({nbasis,nbasis}), hscreen_array(nbasis) {
     one_mo = reinterpret_cast<double *>(one_mo_array.request().ptr);
     two_mo = reinterpret_cast<double *>(two_mo_array.request().ptr);
     h = reinterpret_cast<double *>(h_array.request().ptr);
@@ -173,6 +173,7 @@ SQuantOp::SQuantOp(const double e, const Array<double> mo1, const Array<double> 
     // (used for screening)
     JKscreen = reinterpret_cast<double *>(JKscreen_array.request().ptr);
     Jscreen = reinterpret_cast<double *>(Jscreen_array.request().ptr);
+    hscreen = reinterpret_cast<double *>(hscreen_array.request().ptr);
     long n1 = nbasis;
     long n2 = nbasis * n1;
     long n3 = nbasis * n2;
@@ -184,10 +185,12 @@ SQuantOp::SQuantOp(const double e, const Array<double> mo1, const Array<double> 
     for (i = 0; i != n1; ++i) {
         ii = i;
         h[k++] = one_mo[i * (n1 + 1)];
+        double hmax_i = 0.0;
         for (j = 0; j != n1; ++j) {
             jj = j;
             double JKmax_ij = 0.0;
             double Jmax_ij = 0.0;
+            hmax_i = std::max(std::abs(one_mo[j * n1 + i]), hmax_i);
             for (kk = 0; kk != n1; ++kk) {
                 for (ll = 0; ll != n1; ++ll) {
                     double aval = std::abs(two_mo[n3 * ii + n2 * kk + n1 * jj + ll] - two_mo[n3 * ii + n2 * kk + n1 * ll + jj]);
@@ -206,6 +209,7 @@ SQuantOp::SQuantOp(const double e, const Array<double> mo1, const Array<double> 
             w[l++] =
                 two_mo[i * n3 + j * n2 + i * n1 + j] * 2 - two_mo[i * n3 + j * n2 + j * n1 + i];
         }
+        hscreen[i] = hmax_i;
     }
 }
 
@@ -250,7 +254,7 @@ void SQuantOp::to_file(const std::string &filename, const long nelec, const long
 }
 
 template<class WfnType>
-void SQuantOp::perform_one_electron_direct(const WfnType &wfn, const long xsize, const bool triplet, const double *x, double *y) const {
+void SQuantOp::perform_one_electron_direct(const WfnType &wfn, const long xsize, const bool triplet, const double eps, const double *x, double *y) const {
     auto worker = [&](const long start, const long end, std::vector<std::pair<long, double>>& buf){
         AlignedVector<ulong> det(wfn.nword2);
         AlignedVector<long> occs(wfn.nocc);
@@ -266,9 +270,9 @@ void SQuantOp::perform_one_electron_direct(const WfnType &wfn, const long xsize,
         long *virs_up = &virs[0];
         long *virs_dn = virs_up + wfn.nvir_up;
         const double sign_triplet = triplet ? -1.0 : 1.0;
-        const double very_small = 1e-12;
         Hash idet_hash, jdet_hash;
         for (long idet = start; idet<end; idet++){
+            double eps_i = eps / std::abs(x[idet]);
             diag = 0.0;
             const ulong *rdet_up = wfn.det_ptr(idet);
             const ulong *rdet_dn = rdet_up + wfn.nword;
@@ -282,11 +286,14 @@ void SQuantOp::perform_one_electron_direct(const WfnType &wfn, const long xsize,
             for (i = 0; i < wfn.nocc_up; ++i) {
                 ii = occs_up[i];
                 diag += one_mo[(wfn.nbasis + 1) * ii];
+                // if all (jj) for this ii are below eps_i, we skip
+                if (hscreen[ii] < eps_i)
+                    continue;
                 // loop over spin-up virtual indices
                 for (j = 0; j < wfn.nvir_up; ++j) {
                     jj = virs_up[j];
                     val = one_mo[n1 * ii + jj];
-                    if (std::abs(val) < very_small) {
+                    if (std::abs(val) < eps_i) {
                         continue;
                     }
                     // 1-0 excitation elements
@@ -304,11 +311,13 @@ void SQuantOp::perform_one_electron_direct(const WfnType &wfn, const long xsize,
             for (i = 0; i < wfn.nocc_dn; ++i) {
                 ii = occs_dn[i];
                 diag += sign_triplet * one_mo[(wfn.nbasis + 1) * ii];
+                if (hscreen[ii] < eps_i)
+                    continue;
                 // loop over spin-down virtual indices
                 for (j = 0; j < wfn.nvir_dn; ++j) {
                     jj = virs_dn[j];
                     val = one_mo[n1 * ii + jj];
-                    if (std::abs(val) < very_small) {
+                    if (std::abs(val) < eps_i) {
                         continue;
                     }
                     // 0-1 excitation elements
@@ -356,15 +365,15 @@ void SQuantOp::perform_one_electron_direct(const WfnType &wfn, const long xsize,
 }
 
 template<class WfnType>
-Array<double> SQuantOp::py_one_electron_direct(const WfnType &wfn, const Array<double> x, const bool triplet) const {
+Array<double> SQuantOp::py_one_electron_direct(const WfnType &wfn, const Array<double> x, const bool triplet, const double eps) const {
     Array<double> y(wfn.ndet);
     auto x_info = x.request();
     long xsize = x_info.size;
-    perform_one_electron_direct(wfn, xsize, triplet, reinterpret_cast<const double *>(x_info.ptr), reinterpret_cast<double *>(y.request().ptr));
+    perform_one_electron_direct(wfn, xsize, triplet, eps, reinterpret_cast<const double *>(x_info.ptr), reinterpret_cast<double *>(y.request().ptr));
     return y;
 }
 
-template Array<double> SQuantOp::py_one_electron_direct(const FullCIWfn &wfn, const Array<double> x, const bool triplet) const ;
+template Array<double> SQuantOp::py_one_electron_direct(const FullCIWfn &wfn, const Array<double> x, const bool triplet, const double eps) const ;
 
 
 

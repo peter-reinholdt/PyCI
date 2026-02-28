@@ -293,8 +293,8 @@ double py_compute_enpt2(const SQuantOp &, const WfnType &, const Array<double>, 
 struct SQuantOp final {
 public:
     long nbasis;
-    double ecore, *one_mo, *two_mo, *h, *v, *w, *JKscreen, *Jscreen, hmax, Jmax, JKmax;
-    Array<double> one_mo_array, two_mo_array, h_array, v_array, w_array, JKscreen_array, Jscreen_array;
+    double ecore, *one_mo, *two_mo, *h, *v, *w, *JKscreen, *Jscreen, *hscreen, hmax, Jmax, JKmax;
+    Array<double> one_mo_array, two_mo_array, h_array, v_array, w_array, JKscreen_array, Jscreen_array, hscreen_array;
 
     SQuantOp(void);
 
@@ -309,10 +309,10 @@ public:
     void to_file(const std::string &, const long, const long, const double) const;
 
     template<class WfnType>
-    void perform_one_electron_direct(const WfnType &, const long, const bool, const double *, double *) const;
+    void perform_one_electron_direct(const WfnType &, const long, const bool, const double, const double *, double *) const;
 
     template<class WfnType>
-    Array<double> py_one_electron_direct(const WfnType &, const Array<double>, const bool) const;
+    Array<double> py_one_electron_direct(const WfnType &, const Array<double>, const bool, const double) const;
 };
 
 /* Wave function classes. */
