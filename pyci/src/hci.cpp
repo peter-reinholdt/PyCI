@@ -49,13 +49,18 @@ void hci_thread_add_dets(const SQuantOp &ham, const DOCIWfn &wfn, DOCIWfn &t_wfn
 void hci_thread_add_dets(const SQuantOp &ham, const FullCIWfn &wfn, FullCIWfn &t_wfn,
                          const double *coeffs, const double eps, const long idet, ulong *det_up,
                          long *occs_up, long *virs_up) {
+    double eps_i = eps / std::abs(coeffs[idet]);
+    double hbound = ham.hmax + std::max(wfn.nocc_up * ham.JKmax + wfn.nocc_dn * ham.Jmax,
+                                        wfn.nocc_up * ham.Jmax + wfn.nocc_dn * ham.JKmax);
+    if (eps_i >= hbound)
+        return;
+    double bound;
     long i, j, k, l, ii, jj, kk, ll, ioffset, koffset;
     long n1 = wfn.nbasis;
     long n2 = n1 * n1;
     long n3 = n1 * n2;
     Hash ij_hash, kl_hash;
     double val;
-    double eps_i = eps / std::abs(coeffs[idet]);
     const ulong *rdet_up = wfn.det_ptr(idet);
     const ulong *rdet_dn = rdet_up + wfn.nword;
     ulong *det_dn = det_up + wfn.nword;
@@ -79,57 +84,64 @@ void hci_thread_add_dets(const SQuantOp &ham, const FullCIWfn &wfn, FullCIWfn &t
             // 1-0 excitation elements
             excite_det(ii, jj, det_up);
             ij_hash = wfn.excite_hash(ref_hash, ii, jj, ALPHA);
-            val = ham.one_mo[n1 * ii + jj];
-            for (k = 0; k < wfn.nocc_up; ++k) {
-                kk = occs_up[k];
-                koffset = ioffset + n2 * kk;
-                val += ham.two_mo[koffset + n1 * jj + kk] - ham.two_mo[koffset + n1 * kk + jj];
-            }
-            for (k = 0; k < wfn.nocc_dn; ++k) {
-                kk = occs_dn[k];
-                val += ham.two_mo[ioffset + n2 * kk + n1 * jj + kk];
-            }
-            // add determinant if |H*c| > eps and not already in wfn
-            if (std::abs(val) > eps_i) {
-                if (wfn.index_det_from_rank(ij_hash) == -1)
-                    t_wfn.add_det_with_rank(det_up, ij_hash);
+            bound = std::abs(ham.one_mo[n1 * ii + jj]) + wfn.nocc_up * ham.JKscreen[ii * n1 + jj] + wfn.nocc_dn * ham.Jscreen[ii * n1 + jj];
+            if (bound >= eps_i) {
+                val = ham.one_mo[n1 * ii + jj];
+                for (k = 0; k < wfn.nocc_up; ++k) {
+                    kk = occs_up[k];
+                    koffset = ioffset + n2 * kk;
+                    val += ham.two_mo[koffset + n1 * jj + kk] - ham.two_mo[koffset + n1 * kk + jj];
+                }
+                for (k = 0; k < wfn.nocc_dn; ++k) {
+                    kk = occs_dn[k];
+                    val += ham.two_mo[ioffset + n2 * kk + n1 * jj + kk];
+                }
+                // add determinant if |H*c| > eps and not already in wfn
+                if (std::abs(val) > eps_i) {
+                    if (wfn.index_det_from_rank(ij_hash) == -1)
+                        t_wfn.add_det_with_rank(det_up, ij_hash);
+                }
             }
             // loop over spin-down occupied indices
-            for (k = 0; k < wfn.nocc_dn; ++k) {
-                kk = occs_dn[k];
-                koffset = ioffset + n2 * kk;
-                // loop over spin-down virtual indices
-                for (l = 0; l < wfn.nvir_dn; ++l) {
-                    ll = virs_dn[l];
-                    // 1-1 excitation elements
-                    val = ham.two_mo[koffset + n1 * jj + ll];
-                    // add determinant if |H*c| > eps and not already in wfn
-                    if (std::abs(val) > eps_i) {
-                        kl_hash = wfn.excite_hash(ij_hash, kk, ll, BETA);
-                        if (wfn.index_det_from_rank(kl_hash) == -1) {
-                            excite_det(kk, ll, det_dn);
-                            t_wfn.add_det_with_rank(det_up, kl_hash);
-                            excite_det(ll, kk, det_dn);
+            if (ham.Jscreen[ii * n1 + jj] > eps_i) {
+                for (k = 0; k < wfn.nocc_dn; ++k) {
+                    kk = occs_dn[k];
+                    koffset = ioffset + n2 * kk;
+                    // loop over spin-down virtual indices
+                    for (l = 0; l < wfn.nvir_dn; ++l) {
+                        ll = virs_dn[l];
+                        // 1-1 excitation elements
+                        val = ham.two_mo[koffset + n1 * jj + ll];
+                        // add determinant if |H*c| > eps and not already in wfn
+                        if (std::abs(val) > eps_i) {
+                            kl_hash = wfn.excite_hash(ij_hash, kk, ll, BETA);
+                            if (wfn.index_det_from_rank(kl_hash) == -1) {
+                                excite_det(kk, ll, det_dn);
+                                t_wfn.add_det_with_rank(det_up, kl_hash);
+                                excite_det(ll, kk, det_dn);
+                            }
                         }
                     }
                 }
             }
             // loop over spin-up occupied indices
-            for (k = i + 1; k < wfn.nocc_up; ++k) {
-                kk = occs_up[k];
-                koffset = ioffset + n2 * kk;
-                // loop over spin-up virtual indices
-                for (l = j + 1; l < wfn.nvir_up; ++l) {
-                    ll = virs_up[l];
-                    // 2-0 excitation elements
-                    val = ham.two_mo[koffset + n1 * jj + ll] - ham.two_mo[koffset + n1 * ll + jj];
-                    // add determinant if |H*c| > eps and not already in wfn
-                    if (std::abs(val) > eps_i) {
-                        excite_det(kk, ll, det_up);
-                        kl_hash = wfn.excite_hash(ij_hash, kk, ll, ALPHA);
-                        if (wfn.index_det_from_rank(kl_hash) == -1)
-                            t_wfn.add_det_with_rank(det_up, kl_hash);
-                        excite_det(ll, kk, det_up);
+            if (ham.JKscreen[n1 * ii + jj] > eps_i) {
+                for (k = i + 1; k < wfn.nocc_up; ++k) {
+                    kk = occs_up[k];
+                    koffset = ioffset + n2 * kk;
+                    // loop over spin-up virtual indices
+                    for (l = j + 1; l < wfn.nvir_up; ++l) {
+                        ll = virs_up[l];
+                        // 2-0 excitation elements
+                        val = ham.two_mo[koffset + n1 * jj + ll] - ham.two_mo[koffset + n1 * ll + jj];
+                        // add determinant if |H*c| > eps and not already in wfn
+                        if (std::abs(val) > eps_i) {
+                            excite_det(kk, ll, det_up);
+                            kl_hash = wfn.excite_hash(ij_hash, kk, ll, ALPHA);
+                            if (wfn.index_det_from_rank(kl_hash) == -1)
+                                t_wfn.add_det_with_rank(det_up, kl_hash);
+                            excite_det(ll, kk, det_up);
+                        }
                     }
                 }
             }
@@ -146,37 +158,42 @@ void hci_thread_add_dets(const SQuantOp &ham, const FullCIWfn &wfn, FullCIWfn &t
             // 0-1 excitation elements
             excite_det(ii, jj, det_dn);
             ij_hash = wfn.excite_hash(ref_hash, ii, jj, BETA);
-            val = ham.one_mo[n1 * ii + jj];
-            for (k = 0; k < wfn.nocc_up; ++k) {
-                kk = occs_up[k];
-                val += ham.two_mo[ioffset + n2 * kk + n1 * jj + kk];
-            }
-            for (k = 0; k < wfn.nocc_dn; ++k) {
-                kk = occs_dn[k];
-                koffset = ioffset + n2 * kk;
-                val += ham.two_mo[koffset + n1 * jj + kk] - ham.two_mo[koffset + n1 * kk + jj];
-            }
-            // add determinant if |H*c| > eps and not already in wfn
-            if (std::abs(val) > eps_i) {
-                if (wfn.index_det_from_rank(ij_hash) == -1)
-                    t_wfn.add_det_with_rank(det_up, ij_hash);
+            bound = std::abs(ham.one_mo[n1 * ii + jj]) + wfn.nocc_up * ham.Jscreen[ii * n1 + jj] + wfn.nocc_dn * ham.JKscreen[ii * n1 + jj];
+            if (bound >= eps_i) {
+                val = ham.one_mo[n1 * ii + jj];
+                for (k = 0; k < wfn.nocc_up; ++k) {
+                    kk = occs_up[k];
+                    val += ham.two_mo[ioffset + n2 * kk + n1 * jj + kk];
+                }
+                for (k = 0; k < wfn.nocc_dn; ++k) {
+                    kk = occs_dn[k];
+                    koffset = ioffset + n2 * kk;
+                    val += ham.two_mo[koffset + n1 * jj + kk] - ham.two_mo[koffset + n1 * kk + jj];
+                }
+                // add determinant if |H*c| > eps and not already in wfn
+                if (std::abs(val) > eps_i) {
+                    if (wfn.index_det_from_rank(ij_hash) == -1)
+                        t_wfn.add_det_with_rank(det_up, ij_hash);
+                }
             }
             // loop over spin-down occupied indices
-            for (k = i + 1; k < wfn.nocc_dn; ++k) {
-                kk = occs_dn[k];
-                koffset = ioffset + n2 * kk;
-                // loop over spin-down virtual indices
-                for (l = j + 1; l < wfn.nvir_dn; ++l) {
-                    ll = virs_dn[l];
-                    // 0-2 excitation elements
-                    val = ham.two_mo[koffset + n1 * jj + ll] - ham.two_mo[koffset + n1 * ll + jj];
-                    // add determinant if |H*c| > eps and not already in wfn
-                    if (std::abs(val) > eps_i) {
-                        excite_det(kk, ll, det_dn);
-                        kl_hash = wfn.excite_hash(ij_hash, kk, ll, BETA);
-                        if (wfn.index_det_from_rank(kl_hash) == -1)
-                            t_wfn.add_det_with_rank(det_up, kl_hash);
-                        excite_det(ll, kk, det_dn);
+            if (ham.JKscreen[ii * n1 + jj] > eps_i) {
+                for (k = i + 1; k < wfn.nocc_dn; ++k) {
+                    kk = occs_dn[k];
+                    koffset = ioffset + n2 * kk;
+                    // loop over spin-down virtual indices
+                    for (l = j + 1; l < wfn.nvir_dn; ++l) {
+                        ll = virs_dn[l];
+                        // 0-2 excitation elements
+                        val = ham.two_mo[koffset + n1 * jj + ll] - ham.two_mo[koffset + n1 * ll + jj];
+                        // add determinant if |H*c| > eps and not already in wfn
+                        if (std::abs(val) > eps_i) {
+                            excite_det(kk, ll, det_dn);
+                            kl_hash = wfn.excite_hash(ij_hash, kk, ll, BETA);
+                            if (wfn.index_det_from_rank(kl_hash) == -1)
+                                t_wfn.add_det_with_rank(det_up, kl_hash);
+                            excite_det(ll, kk, det_dn);
+                        }
                     }
                 }
             }
