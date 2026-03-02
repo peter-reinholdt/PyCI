@@ -248,6 +248,37 @@ void OneSpinWfn::add_dets_from_wfn(const OneSpinWfn &wfn) {
         add_det_with_rank(&wfn.dets[keyval.second * nword], keyval.first);
 }
 
+void OneSpinWfn::partial_add_dets_from_wfn(const OneSpinWfn &wfn) {
+    for (const auto &keyval : wfn.dict) {
+        if (dict.insert(std::make_pair(keyval.first, ndet)).second) {
+            size_t size = tdets.size();
+            tdets.resize(size + nword);
+            std::memcpy(&tdets[size], &wfn.dets[keyval.second * nword], sizeof(ulong) * nword);
+            ndet++;
+        }
+    }
+}
+
+void OneSpinWfn::finish_add_dets_from_wfn() {
+    size_t nword_added = tdets.size();
+    size_t nword_old = dets.size();
+    dets.resize(nword_old + nword_added);
+    size_t nthread = get_num_threads();
+    size_t max_threads = std::max<size_t>(1, nword_added / PYCI_CHUNKSIZE_MIN);
+    nthread = std::min(nthread, max_threads);
+    Vector<std::thread> v_threads;
+    for (size_t i = 0; i < nthread; ++i) {
+        v_threads.emplace_back([&, i](){
+            size_t start = end_chunk_idx(i, nthread, nword_added);
+            size_t end = end_chunk_idx(i + 1, nthread, nword_added);
+            end = std::min(end, nword_added);
+            std::memcpy(&dets[nword_old + start], &tdets[start], (end - start)*sizeof(ulong));
+        });
+    }
+    for (auto &thread : v_threads) thread.join();
+    tdets.resize(0);
+}
+
 void OneSpinWfn::reserve(const long n) {
     dets.reserve(n * nword);
     dict.reserve(n);
