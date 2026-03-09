@@ -278,28 +278,25 @@ long add_hci(const SQuantOp &ham, WfnType &wfn, const double *coeffs, const long
     Vector<std::thread> v_threads;
     Vector<WfnType> v_wfns;
     v_threads.reserve(nthread);
-    std::mutex det_add_mutex;
-    std::atomic<long> next_chunk(0);
+    v_wfns.reserve(nthread);
     long num_chunks = 1 + size / PYCI_CHUNKSIZE_MIN;
-    for (long i = 0; i < nthread; ++i) {
-        v_threads.emplace_back([&]() {
-            while (true) {
-                WfnType v_wfn(wfn.nbasis, wfn.nocc_up, wfn.nocc_dn);
-                long ichunk = next_chunk.fetch_add(1);
-                if (ichunk >= num_chunks) break;
-                long start = end_chunk_idx(ichunk, num_chunks, size);
-                long end = end_chunk_idx(ichunk + 1, num_chunks, size);
-                end = std::min(end, size);
-                hci_thread<WfnType>(ham, wfn, v_wfn, coeffs, eps, start, end);
-                {
-                    std::lock_guard<std::mutex> lock(det_add_mutex);
-                    wfn.partial_add_dets_from_wfn(v_wfn);
-                }
-            }
-        });
+    long ichunk = 0;
+    while (ichunk < num_chunks) {
+        for (long ithread = 0; ithread < nthread; ithread++) {
+            long start = end_chunk_idx(ichunk, num_chunks, size);
+            long end = end_chunk_idx(ichunk + 1, num_chunks, size);
+            end = std::min(end, size);
+            v_wfns.emplace_back(wfn.nbasis, wfn.nocc_up, wfn.nocc_dn);
+            v_threads.emplace_back(&hci_thread<WfnType>, std::ref(ham), std::ref(wfn),
+                    std::ref(v_wfns.back()), coeffs, eps, start, end);
+            if (ichunk >= num_chunks) break;
+            ichunk++;
+        }
+        for (auto &thread : v_threads) thread.join();
+        v_threads.clear();
+        for (auto &v_wfn : v_wfns) wfn.add_dets_from_wfn(v_wfn);
+        v_wfns.clear();
     }
-    for (auto &thread : v_threads) thread.join();
-    wfn.finish_add_dets_from_wfn();
     return wfn.ndet - ndet_old;
 }
 

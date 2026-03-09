@@ -154,7 +154,7 @@ struct IdentityHash {
 };
 
 template<class KeyType, class ValueType>
-using HashMap = phmap::flat_hash_map<KeyType, ValueType, IdentityHash>;
+using HashMap = phmap::parallel_flat_hash_map<KeyType, ValueType, IdentityHash>;
 
 /* Pybind11 NumPy array types. */
 
@@ -416,10 +416,6 @@ public:
 
     void add_dets_from_wfn(const OneSpinWfn &);
 
-    void partial_add_dets_from_wfn(const OneSpinWfn &);
-
-    void finish_add_dets_from_wfn();
-
     void reserve(const long);
 
     Array<ulong> py_getitem(const long) const;
@@ -504,10 +500,6 @@ public:
     void add_excited_dets(const ulong *, const long, const long);
 
     void add_dets_from_wfn(const TwoSpinWfn &);
-
-    void partial_add_dets_from_wfn(const TwoSpinWfn &);
-
-    void finish_add_dets_from_wfn();
 
     void reserve(const long);
 

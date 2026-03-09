@@ -266,39 +266,38 @@ void TwoSpinWfn::add_excited_dets(const ulong *rdet, const long e_up, const long
 }
 
 void TwoSpinWfn::add_dets_from_wfn(const TwoSpinWfn &wfn) {
-    for (const auto &keyval : wfn.dict)
-        add_det_with_rank(&wfn.dets[keyval.second * nword2], keyval.first);
-}
-
-void TwoSpinWfn::partial_add_dets_from_wfn(const TwoSpinWfn &wfn) {
-    for (const auto &keyval : wfn.dict) {
-        if (dict.insert(std::make_pair(keyval.first, ndet)).second) {
-            size_t size = tdets.size();
-            tdets.resize(size + nword2);
-            std::memcpy(&tdets[size], &wfn.dets[keyval.second * nword2], sizeof(ulong) * nword2);
-            ndet++;
-        }
-    }
-}
-
-void TwoSpinWfn::finish_add_dets_from_wfn() {
-    size_t nword_added = tdets.size();
-    size_t nword_old = dets.size();
-    dets.resize(nword_old + nword_added);
+    // we will add at most wfn.det dets
+    size_t added_dets = wfn.ndet;
+    reserve((ndet + added_dets));
+    dets.resize((ndet + added_dets) * nword2);
     size_t nthread = get_num_threads();
-    size_t max_threads = std::max<size_t>(1, nword_added / PYCI_CHUNKSIZE_MIN);
-    nthread = std::min(nthread, max_threads);
+    size_t nsubmap = dict.subcnt(); 
+    if (nthread > nsubmap) nthread = nsubmap;
     Vector<std::thread> v_threads;
-    for (size_t i = 0; i < nthread; ++i) {
-        v_threads.emplace_back([&, i](){
-            size_t start = end_chunk_idx(i, nthread, nword_added);
-            size_t end = end_chunk_idx(i + 1, nthread, nword_added);
-            end = std::min(end, nword_added);
-            std::memcpy(&dets[nword_old + start], &tdets[start], (end - start)*sizeof(ulong));
+    v_threads.reserve(nthread);
+    std::atomic<long> next_index{ndet};
+    
+    // each thread should write only to its own submap
+    for (size_t ithread = 0; ithread < nthread; ithread++) {
+        v_threads.emplace_back([&, ithread]() {
+            for (const auto &keyval : wfn.dict) {
+                Hash rank = keyval.first;
+                size_t submap_idx = dict.subidx(dict.hash(rank));
+                if (submap_idx % nthread == ithread) {
+                    const ulong* src_det = &wfn.dets[keyval.second * nword2];
+                    auto [it, inserted] = dict.try_emplace(rank, -1);
+                    if (inserted) {
+                        size_t idx = next_index.fetch_add(1, std::memory_order_relaxed);
+                        std::memcpy(&dets[idx * nword2], src_det, nword2 * sizeof(ulong));
+                        it->second = idx;
+                    }
+                }
+            }
         });
     }
     for (auto &thread : v_threads) thread.join();
-    tdets.resize(0);
+    ndet = next_index;
+    dets.resize(ndet * nword2);
 }
 
 void TwoSpinWfn::reserve(const long n) {
