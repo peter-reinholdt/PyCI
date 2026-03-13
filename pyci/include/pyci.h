@@ -416,6 +416,9 @@ public:
 
     void add_dets_from_wfn(const OneSpinWfn &);
 
+    template<typename WfnType>
+    void add_dets_from_wfns(const Vector<WfnType> &);
+
     void reserve(const long);
 
     Array<ulong> py_getitem(const long) const;
@@ -500,6 +503,9 @@ public:
     void add_excited_dets(const ulong *, const long, const long);
 
     void add_dets_from_wfn(const TwoSpinWfn &);
+    
+    template<typename WfnType>
+    void add_dets_from_wfns(const Vector<WfnType> &);
 
     void reserve(const long);
 

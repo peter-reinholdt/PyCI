@@ -278,6 +278,50 @@ void OneSpinWfn::add_dets_from_wfn(const OneSpinWfn &wfn) {
     dets.resize(ndet * nword);
 }
 
+template <typename WfnType>
+void OneSpinWfn::add_dets_from_wfns(const Vector<WfnType> &wfns) {
+    // we will add at most wfn.det dets
+    size_t added_dets = 0;
+    for (const auto &wfn : wfns) {
+        added_dets += wfn.ndet;
+    }
+    reserve((ndet + added_dets));
+    dets.resize((ndet + added_dets) * nword);
+    size_t nthread = get_num_threads();
+    size_t nsubmap = dict.subcnt(); 
+    if (nthread > nsubmap) nthread = nsubmap;
+    Vector<std::thread> v_threads;
+    v_threads.reserve(nthread);
+    std::atomic<long> next_index{ndet};
+    
+    // each thread should write only to its own submap
+    for (size_t ithread = 0; ithread < nthread; ithread++) {
+        v_threads.emplace_back([&, ithread]() {
+            for (const auto &wfni : wfns) {
+                const auto &wfn = static_cast<const OneSpinWfn&>(wfni); 
+                for (const auto &keyval : wfn.dict) {
+                    Hash rank = keyval.first;
+                    size_t submap_idx = dict.subidx(dict.hash(rank));
+                    if (submap_idx % nthread == ithread) {
+                        const ulong* src_det = &wfn.dets[keyval.second * nword];
+                        auto [it, inserted] = dict.try_emplace(rank, -1);
+                        if (inserted) {
+                            size_t idx = next_index.fetch_add(1, std::memory_order_relaxed);
+                            std::memcpy(&dets[idx * nword], src_det, nword * sizeof(ulong));
+                            it->second = idx;
+                        }
+                    }
+                }
+            }
+        });
+    }
+    for (auto &thread : v_threads) thread.join();
+    ndet = next_index;
+    dets.resize(ndet * nword);
+}
+template void pyci::OneSpinWfn::add_dets_from_wfns<pyci::GenCIWfn>(const Vector<GenCIWfn>&);
+template void pyci::OneSpinWfn::add_dets_from_wfns<pyci::DOCIWfn>(const Vector<DOCIWfn>&);
+
 void OneSpinWfn::reserve(const long n) {
     dets.reserve(n * nword);
     dict.reserve(n);

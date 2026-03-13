@@ -294,7 +294,7 @@ long add_hci(const SQuantOp &ham, WfnType &wfn, const double *coeffs, const long
         }
         for (auto &thread : v_threads) thread.join();
         v_threads.clear();
-        for (auto &v_wfn : v_wfns) wfn.add_dets_from_wfn(v_wfn);
+        wfn.add_dets_from_wfns(v_wfns);
         v_wfns.clear();
     }
     return wfn.ndet - ndet_old;
