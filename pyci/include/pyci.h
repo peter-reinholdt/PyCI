@@ -45,9 +45,6 @@
 
 #include <sort_with_arg.h>
 
-#define HAS_MKL 1
-#include <mkl.h>
-
 /* Macros to produce strings from literal macro parameters. */
 
 #define LITERAL(S) #S
@@ -659,8 +656,6 @@ public:
     void perform_op(const double *, double *) const;
 
     void perform_op_symm(const double *, double *) const;
-
-    void perform_op_symm_mkl(const double *, double *) const;
 
     void solve_ci(const long, const double *, const long, const long, const double, double *,
                   double *) const;
