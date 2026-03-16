@@ -240,7 +240,7 @@ template<class WfnType>
 double compute_overlap(const WfnType &, const WfnType &, const double *, const double *);
 
 template<class WfnType>
-long add_hci(const SQuantOp &, WfnType &, const double *, const double, const long = -1);
+long add_hci(const SQuantOp &, WfnType &, const double *, const double, const long = -1, const long = -1);
 
 template<class WfnType>
 double compute_enpt2(const SQuantOp &, const WfnType &, const double *, const double, const double,
@@ -274,7 +274,7 @@ double py_compute_overlap(const WfnType &, const WfnType &, const Array<double>,
                           const Array<double>);
 
 template<class WfnType>
-long py_add_hci(const SQuantOp &, WfnType &, const Array<double>, const double, const long = -1);
+long py_add_hci(const SQuantOp &, WfnType &, const Array<double>, const double, const long = -1, const long = -1);
 
 template<class WfnType>
 double py_compute_enpt2(const SQuantOp &, const WfnType &, const Array<double>, const double,

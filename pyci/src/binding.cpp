@@ -1165,6 +1165,8 @@ eps : float, default=1.0e-5
     :math:`\epsilon` value for Heat-Bath CI routine.
 nthread : int
     Number of threads to use.
+cvs_hole : int
+    Index of orbital to require having a hole (core-valence separation)
 
 Returns
 -------
@@ -1173,13 +1175,13 @@ ndet : int
 
 )""",
       py::arg("ham"), py::arg("wfn"), py::arg("coeffs"), py::arg("eps") = 1.0e-5,
-      py::arg("nthread") = -1);
+      py::arg("nthread") = -1, py::arg("cvs_hole") = -1);
 
 m.def("add_hci", &py_add_hci<FullCIWfn>, py::arg("ham"), py::arg("wfn"), py::arg("coeffs"),
-      py::arg("eps") = 1.0e-5, py::arg("nthread") = -1);
+      py::arg("eps") = 1.0e-5, py::arg("nthread") = -1, py::arg("cvs_hole") = -1);
 
 m.def("add_hci", &py_add_hci<GenCIWfn>, py::arg("ham"), py::arg("wfn"), py::arg("coeffs"),
-      py::arg("eps") = 1.0e-5, py::arg("nthread") = -1);
+      py::arg("eps") = 1.0e-5, py::arg("nthread") = -1, py::arg("cvs_hole") = -1);
 
 m.def("compute_overlap", &py_compute_overlap<OneSpinWfn>, R"""(
 Compute the overlap :math:`\left<\Psi_1|\Psi_2\right>` of two wave functions.
